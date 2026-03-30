@@ -26,18 +26,24 @@ const DATA: RideOption[] = [
 
 const getAppUrl = (provider: string) => {
   switch (provider) {
-    case 'Uber':
-      return 'uber://';
-    case 'Ola':
-      return 'olacabs://';
     case 'Rapido':
-      return 'rapido://';
+      return 'https://play.google.com/store/apps/details?id=com.rapido.passenger';
+    case 'Uber':
+      return 'https://play.google.com/store/apps/details?id=com.ubercab';
+    case 'Ola':
+      return 'https://play.google.com/store/apps/details?id=com.olacabs.customer';
     case 'inDrive':
-      return 'indrive://';
+      return 'https://play.google.com/store/apps/details?id=sinet.startup.inDriver';
     case 'Namma Yatri':
-      return 'yatri://';
+      return 'https://play.google.com/store/apps/details?id=net.openkochi.yatri';
     case 'BluSmart':
-      return 'blusmart://';
+      return 'https://play.google.com/store/apps/details?id=com.blusmart';
+    case 'Meru Cabs':
+      return 'https://play.google.com/store/apps/details?id=com.meru.meru';
+    case 'Bharat Cab':
+      return 'https://play.google.com/store/apps/details?id=com.bharatcab.customer';
+    case 'Savaari':
+      return 'https://play.google.com/store/apps/details?id=com.savaari';
     default:
       return `https://play.google.com/store/search?q=${encodeURIComponent(provider)}`;
   }
