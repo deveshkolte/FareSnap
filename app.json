@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "RideCompare",
-    "slug": "RideCompare",
+    "name": "FareSnap",
+    "slug": "FareSnap",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "ridecompare",
+    "scheme": "faresnap",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
