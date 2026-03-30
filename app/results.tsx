@@ -90,7 +90,7 @@ export default function ResultsScreen() {
         <Text style={styles.subtitle}>{pickup} → {destination}</Text>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterBar} contentContainerStyle={{ alignItems: 'center' }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.filterBar, {height: 52, flexGrow: 0}]} contentContainerStyle={{ alignItems: 'center' }}>
         <TouchableOpacity
           style={[styles.filterButton, selectedFilter === 'all' && styles.filterButtonActive]}
           onPress={() => setSelectedFilter('all')}
@@ -165,11 +165,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#020617',
   },
   header: {
-    paddingTop: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   title: {
     fontSize: 28,
@@ -182,11 +180,8 @@ const styles = StyleSheet.create({
     color: '#64748b',
   },
   filterBar: {
-    paddingTop: 0,
-    paddingBottom: 0,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   filterButton: {
     backgroundColor: '#1f2937',
