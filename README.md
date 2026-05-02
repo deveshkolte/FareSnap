@@ -54,6 +54,8 @@ Bangalore, Mumbai, Delhi, Hyderabad, Chennai, Pune, Kolkata, Ahmedabad, Jaipur
 ---
 
 ## Project Structure
+
+```
 app/
 ├── (tabs)/
 │   ├── index.tsx        # Home + Onboarding
@@ -66,6 +68,7 @@ utils/
 ├── distanceEngine.ts    # Geocoding + OSRM
 ├── cityDetector.ts      # GPS + reverse geocode
 └── appUrls.ts           # Deep links + web URLs
+```
 
 ---
 
