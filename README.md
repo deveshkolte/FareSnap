@@ -2,6 +2,8 @@
 
 Compare ride fares across 9 apps instantly — Uber, Ola, Rapido, Namma Yatri, BluSmart, Meru, inDrive, Bharat Cab, and Savaari. Built for Indian cities.
 
+📲 **[Download APK](https://expo.dev/accounts/devesh.kolte/projects/faresnap/builds)** — Latest build via EAS
+
 ---
 
 ## Screenshots
