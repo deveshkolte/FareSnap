@@ -1,79 +1,150 @@
-// Utility functions to get mobile web and native deep link URLs for ride booking apps
+import { Linking } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 
-type LocationData = {
-  lat?: number;
-  lng?: number;
-  address: string;
+const UBER_CLIENT_ID = 'qrL6tAfv9pCWuvHuuJWAOOwAft7B-_TF';
+
+type Coords = { lat: number; lng: number };
+
+type OpenRideAppOpts = {
+  pickupCoords?: Coords;
+  dropCoords?: Coords;
+  pickupAddress?: string;
+  dropAddress?: string;
 };
 
-export const getAppUrl = (appName: string, origin: LocationData, destination: LocationData): string => {
-  const encodedOrigin = encodeURIComponent(origin.address);
-  const encodedDest = encodeURIComponent(destination.address);
+type AppConfig = {
+  deepLink: string;
+  webUrl: string;
+  buildDeepLink?: (opts: Required<OpenRideAppOpts>) => string;
+  buildWebUrl?: (opts: Required<OpenRideAppOpts>) => string;
+};
 
-  switch (appName) {
-    case 'Uber':
-      if (origin.lat && origin.lng && destination.lat && destination.lng) {
-        return `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${origin.lat}&pickup[longitude]=${origin.lng}&pickup[nickname]=${encodedOrigin}&dropoff[latitude]=${destination.lat}&dropoff[longitude]=${destination.lng}&dropoff[nickname]=${encodedDest}`;
-      } else {
-        return 'https://m.uber.com/ul/';
+const APP_CONFIGS: Record<string, AppConfig> = {
+  Uber: {
+    deepLink: 'uber://',
+    webUrl: 'https://m.uber.com/',
+    buildDeepLink: (opts) => {
+      const params = new URLSearchParams();
+      params.set('client_id', UBER_CLIENT_ID);
+      params.set('action', 'setPickup');
+      if (opts.pickupCoords) {
+        params.set('pickup[latitude]', String(opts.pickupCoords.lat));
+        params.set('pickup[longitude]', String(opts.pickupCoords.lng));
       }
-    case 'Ola':
-      if (origin.lat && origin.lng && destination.lat && destination.lng) {
-        return `https://book.olacabs.com/?pickup_lat=${origin.lat}&pickup_lng=${origin.lng}&drop_lat=${destination.lat}&drop_lng=${destination.lng}&pickup_name=${encodedOrigin}&drop_name=${encodedDest}`;
-      } else {
-        return 'https://book.olacabs.com/';
+      if (opts.pickupAddress) {
+        params.set('pickup[formatted_address]', opts.pickupAddress);
       }
-    case 'Rapido':
-      return 'https://rapido.bike';
-    case 'Namma Yatri':
-      return 'https://nammayatri.in';
-    case 'BluSmart':
-      return 'https://blu-smart.com';
-    case 'Meru':
-      return 'https://merucabs.com';
-    case 'InDrive':
-      return 'https://indrive.com';
-    case 'Porter':
-      return 'https://porter.in';
-    case 'Jugnoo':
-      return 'https://jugnoo.in';
-    default:
-      return 'https://google.com/maps';
+      if (opts.dropCoords) {
+        params.set('dropoff[latitude]', String(opts.dropCoords.lat));
+        params.set('dropoff[longitude]', String(opts.dropCoords.lng));
+      }
+      if (opts.dropAddress) {
+        params.set('dropoff[formatted_address]', opts.dropAddress);
+      }
+      return `uber://?${params.toString()}`;
+    },
+    buildWebUrl: (opts) => {
+      const params = new URLSearchParams();
+      params.set('client_id', UBER_CLIENT_ID);
+      params.set('action', 'setPickup');
+      if (opts.pickupCoords) {
+        params.set('pickup[latitude]', String(opts.pickupCoords.lat));
+        params.set('pickup[longitude]', String(opts.pickupCoords.lng));
+      }
+      if (opts.pickupAddress) {
+        params.set('pickup[formatted_address]', opts.pickupAddress);
+      }
+      if (opts.dropCoords) {
+        params.set('dropoff[latitude]', String(opts.dropCoords.lat));
+        params.set('dropoff[longitude]', String(opts.dropCoords.lng));
+      }
+      if (opts.dropAddress) {
+        params.set('dropoff[formatted_address]', opts.dropAddress);
+      }
+      return `https://m.uber.com/looking?${params.toString()}`;
+    },
+  },
+  Ola: {
+    deepLink: 'olacabs://app/launch',
+    webUrl: 'https://book.olacabs.com/',
+  },
+  Rapido: {
+    deepLink: 'in.rapido.passenger://open',
+    webUrl: 'https://rapido.bike/',
+  },
+  'Namma Yatri': {
+    deepLink: 'yatri://open',
+    webUrl: 'https://nammayatri.in/',
+  },
+  BluSmart: {
+    deepLink: 'blusmart://open',
+    webUrl: 'https://blu-smart.com/',
+  },
+  inDrive: {
+    deepLink: 'indrive://open',
+    webUrl: 'https://indrive.com/en/home/',
+  },
+  'Bharat Cab': {
+    deepLink: 'bharatcab://open',
+    webUrl: 'https://bharatcab.com/',
+  },
+  Savaari: {
+    deepLink: 'savaari://open',
+    webUrl: 'https://www.savaari.com/',
+  },
+  Meru: {
+    deepLink: 'meru://open',
+    webUrl: 'https://www.meru.in/',
+  },
+};
+
+function hasOpts(opts?: OpenRideAppOpts): opts is Required<OpenRideAppOpts> {
+  return !!(
+    opts?.pickupCoords ||
+    opts?.dropCoords ||
+    opts?.pickupAddress ||
+    opts?.dropAddress
+  );
+}
+
+function getDeepLink(appName: string, opts?: OpenRideAppOpts): string {
+  const config = APP_CONFIGS[appName];
+  if (!config) return 'https://google.com/maps';
+
+  if (config.buildDeepLink && hasOpts(opts)) {
+    return config.buildDeepLink(opts as Required<OpenRideAppOpts>);
   }
-};
 
-export const getDeepLink = (appName: string, origin: LocationData, destination: LocationData): string => {
-  const encodedOrigin = encodeURIComponent(origin.address);
-  const encodedDest = encodeURIComponent(destination.address);
+  return config.deepLink;
+}
 
-  switch (appName) {
-    case 'Uber':
-      if (origin.lat && origin.lng && destination.lat && destination.lng) {
-        return `uber://?action=setPickup&pickup[latitude]=${origin.lat}&pickup[longitude]=${origin.lng}&pickup[nickname]=${encodedOrigin}&dropoff[latitude]=${destination.lat}&dropoff[longitude]=${destination.lng}&dropoff[nickname]=${encodedDest}`;
-      } else {
-        return 'uber://';
-      }
-    case 'Ola':
-      if (origin.lat && origin.lng && destination.lat && destination.lng) {
-        return `olacabs://app/launching?pickup_lat=${origin.lat}&pickup_lng=${origin.lng}&drop_lat=${destination.lat}&drop_lng=${destination.lng}&pickup_name=${encodedOrigin}&drop_name=${encodedDest}`;
-      } else {
-        return 'olacabs://app/launching';
-      }
-    case 'Rapido':
-      return 'in.rapido.passanger://';
-    case 'Namma Yatri':
-      return 'https://nammayatri.in';
-    case 'BluSmart':
-      return 'https://blu-smart.com';
-    case 'Meru':
-      return 'https://merucabs.com';
-    case 'InDrive':
-      return 'https://indrive.com';
-    case 'Porter':
-      return 'https://porter.in';
-    case 'Jugnoo':
-      return 'https://jugnoo.in';
-    default:
-      return getAppUrl(appName, origin, destination);
+function getWebUrl(appName: string, opts?: OpenRideAppOpts): string {
+  const config = APP_CONFIGS[appName];
+  if (!config) return 'https://google.com/maps';
+
+  if (config.buildWebUrl && hasOpts(opts)) {
+    return config.buildWebUrl(opts as Required<OpenRideAppOpts>);
   }
-};
+
+  return config.webUrl;
+}
+
+export async function openRideApp(
+  appName: string,
+  opts?: OpenRideAppOpts
+): Promise<void> {
+  const deepLink = getDeepLink(appName, opts);
+  const webUrl = getWebUrl(appName, opts);
+
+  try {
+    const canOpen = await Linking.canOpenURL(deepLink);
+    if (canOpen) {
+      await Linking.openURL(deepLink);
+      return;
+    }
+  } catch {
+    // fall through to web fallback
+  }
+
+  await WebBrowser.openBrowserAsync(webUrl);
+}
