@@ -1,19 +1,22 @@
-import * as Linking from 'expo-linking';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { getAppUrl, getDeepLink } from '../utils/appUrls';
+import { openRideApp } from '../utils/appUrls';
 import { CityKey, detectCity } from '../utils/cityDetector';
 import { getRoadDistance } from '../utils/distanceEngine';
 import { estimateFare } from '../utils/fareEngine';
+import { reportFare } from '../utils/fareReporter';
 
 type LocationData = {
   lat?: number;
@@ -103,6 +106,11 @@ export default function ResultsScreen() {
   const [fareInfoByProvider, setFareInfoByProvider] = useState<Record<string, ReturnType<typeof estimateFare>>>({});
   const [routeError, setRouteError] = useState(false);
   const [isLoadingRoute, setIsLoadingRoute] = useState(true);
+  const [fareModalVisible, setFareModalVisible] = useState(false);
+  const [selectedApp, setSelectedApp] = useState('');
+  const [fareInput, setFareInput] = useState('');
+  const fareTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const loadCity = async () => {
@@ -199,6 +207,13 @@ Respond ONLY with this exact JSON, no extra text:
     fetchAiInsight();
   }, [city]);
 
+  useEffect(() => {
+    return () => {
+      if (fareTimerRef.current) clearTimeout(fareTimerRef.current);
+      if (autoDismissRef.current) clearTimeout(autoDismissRef.current);
+    };
+  }, []);
+
   const getFareForItem = (item: RideOption) => {
     const info = fareInfoByProvider[item.provider];
     return info?.available ? (info.low ?? Infinity) : Infinity;
@@ -231,21 +246,52 @@ Respond ONLY with this exact JSON, no extra text:
   const isLoaded = Object.keys(fareInfoByProvider).length > 0;
 
   const handleBook = async (appName: string) => {
-    const deepLink = getDeepLink(appName, pickup, destination);
-    const webUrl = getAppUrl(appName, pickup, destination);
     try {
-      const canOpen = await Linking.canOpenURL(deepLink);
-      if (canOpen) {
-        await Linking.openURL(deepLink);
-      } else {
-        await WebBrowser.openBrowserAsync(webUrl, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-          toolbarColor: '#1d4ed8',
-        });
-      }
+      await openRideApp(appName, {
+        pickupCoords: pickup.lat && pickup.lng ? { lat: pickup.lat, lng: pickup.lng } : undefined,
+        dropCoords: destination.lat && destination.lng ? { lat: destination.lat, lng: destination.lng } : undefined,
+        pickupAddress: pickup.address,
+        dropAddress: destination.address,
+      });
     } catch {
-      await WebBrowser.openBrowserAsync(webUrl, { toolbarColor: '#1d4ed8' });
+      // openRideApp already handles fallback; nothing more to do
     }
+
+    if (fareTimerRef.current) clearTimeout(fareTimerRef.current);
+    fareTimerRef.current = setTimeout(() => {
+      setSelectedApp(appName);
+      setFareInput('');
+      setFareModalVisible(true);
+
+      if (autoDismissRef.current) clearTimeout(autoDismissRef.current);
+      autoDismissRef.current = setTimeout(() => {
+        setFareModalVisible(false);
+      }, 30000);
+    }, 1500);
+  };
+
+  const handleFareSubmit = async () => {
+    const parsed = parseFloat(fareInput);
+    if (isNaN(parsed) || parsed <= 0) return;
+
+    try {
+      await reportFare({
+        app: selectedApp,
+        city,
+        pickup_area: pickup.address.split(',')[0].trim(),
+        distance_km: distanceKm,
+        quoted_fare: parsed,
+        app_version: '1.0.0',
+      });
+    } catch {
+      // silently ignore
+    } finally {
+      setFareModalVisible(false);
+    }
+  };
+
+  const handleFareSkip = () => {
+    setFareModalVisible(false);
   };
 
   const getSpecialtyBadgeStyle = (badge: string) => {
@@ -495,6 +541,42 @@ Respond ONLY with this exact JSON, no extra text:
           <View style={{ height: 32 }} />
         </ScrollView>
       </View>
+
+      <Modal
+        visible={fareModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={handleFareSkip}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+        >
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>What fare did you see in {selectedApp}?</Text>
+            <TextInput
+              style={styles.modalInput}
+              keyboardType="numeric"
+              maxLength={5}
+              placeholder="Enter fare in ₹"
+              placeholderTextColor="#94a3b8"
+              value={fareInput}
+              onChangeText={setFareInput}
+            />
+            <Text style={styles.modalConsent}>
+              Fare data is collected anonymously to improve estimates. No personal info is stored.
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButtonGhost} onPress={handleFareSkip} activeOpacity={0.8}>
+                <Text style={styles.modalButtonGhostText}>Skip</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalButtonSolid} onPress={handleFareSubmit} activeOpacity={0.8}>
+                <Text style={styles.modalButtonSolidText}>Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </>
   );
 }
@@ -791,6 +873,77 @@ const styles = StyleSheet.create({
     color: '#92400e',
     lineHeight: 18,
     textAlign: 'center',
+  },
+
+  // Fare modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 360,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  modalConsent: {
+    fontSize: 11,
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 16,
+    marginBottom: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButtonGhost: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalButtonGhostText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  modalButtonSolid: {
+    flex: 1,
+    backgroundColor: '#2563eb',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalButtonSolidText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 
   // Error / loading states
