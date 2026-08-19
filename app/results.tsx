@@ -15,8 +15,8 @@ import {
 import { openRideApp } from '../utils/appUrls';
 import { CityKey, detectCity } from '../utils/cityDetector';
 import { getRoadDistance } from '../utils/distanceEngine';
-import { estimateFare } from '../utils/fareEngine';
 import { reportFare } from '../utils/fareReporter';
+import { QuoteEngine, FareQuote, RideQuoteRequest } from '../utils/quoteEngine';
 
 type LocationData = {
   lat?: number;
@@ -24,12 +24,8 @@ type LocationData = {
   address: string;
 };
 
-type RideOption = {
-  id: string;
-  provider: string;
-  price: number;
+type ProviderMeta = {
   duration: number;
-  rideType: string;
   specialty: string[];
   starRating: number;
 };
@@ -43,17 +39,18 @@ type AIInsight = {
   smartEstimate: string;
 };
 
-const DATA: RideOption[] = [
-  { id: 'rapido', provider: 'Rapido', price: 180, duration: 10, rideType: 'Bike/Auto', specialty: ['Cheapest'], starRating: 4.1 },
-  { id: 'bharat', provider: 'Bharat Cab', price: 190, duration: 62, rideType: 'Cab', specialty: ['Budget', 'Govt backed'], starRating: 3.8 },
-  { id: 'namma', provider: 'Namma Yatri', price: 195, duration: 14, rideType: 'Auto', specialty: ['No Surge', 'South India'], starRating: 4.5 },
-  { id: 'indrive', provider: 'inDrive', price: 210, duration: 12, rideType: 'Cab', specialty: ['Negotiate'], starRating: 4.2 },
-  { id: 'ola', provider: 'Ola', price: 225, duration: 13, rideType: 'Cab', specialty: ['Wide coverage'], starRating: 4.3 },
-  { id: 'uber', provider: 'Uber', price: 240, duration: 12, rideType: 'Cab', specialty: ['Surge possible'], starRating: 4.4 },
-  { id: 'meru', provider: 'Meru Cabs', price: 260, duration: 11, rideType: 'Cab', specialty: ['Premium'], starRating: 4.0 },
-  { id: 'blusmart', provider: 'BluSmart', price: 270, duration: 18, rideType: 'Electric', specialty: ['Eco', 'No Surge'], starRating: 4.6 },
-  { id: 'savaari', provider: 'Savaari', price: 300, duration: 60, rideType: 'Cab', specialty: ['Outstation'], starRating: 3.9 },
-];
+// Static metadata that we'll merge with quotes
+const PROVIDER_META: Record<string, ProviderMeta> = {
+  'Rapido': { duration: 10, specialty: ['Cheapest'], starRating: 4.1 },
+  'Bharat Cab': { duration: 62, specialty: ['Budget', 'Govt backed'], starRating: 3.8 },
+  'Namma Yatri': { duration: 14, specialty: ['No Surge', 'South India'], starRating: 4.5 },
+  'inDrive': { duration: 12, specialty: ['Negotiate'], starRating: 4.2 },
+  'Ola': { duration: 13, specialty: ['Wide coverage'], starRating: 4.3 },
+  'Uber': { duration: 12, specialty: ['Surge possible'], starRating: 4.4 },
+  'Meru Cabs': { duration: 11, specialty: ['Premium'], starRating: 4.0 },
+  'BluSmart': { duration: 18, specialty: ['Eco', 'No Surge'], starRating: 4.6 },
+  'Savaari': { duration: 60, specialty: ['Outstation'], starRating: 3.9 },
+};
 
 const PRIORITY_APPS = ['Uber', 'Ola', 'Rapido'];
 
@@ -69,6 +66,8 @@ const CITY_LABELS: Record<CityKey, string> = {
   jaipur: 'Jaipur',
   default: 'your city',
 };
+
+const quoteEngine = new QuoteEngine();
 
 function AnimatedCard({ children, index, style }: { children: React.ReactNode; index: number; style?: object }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -103,12 +102,16 @@ export default function ResultsScreen() {
   const [routeInfo, setRouteInfo] = useState('');
   const [distanceKm, setDistanceKm] = useState(0);
   const [durationMin, setDurationMin] = useState(0);
-  const [fareInfoByProvider, setFareInfoByProvider] = useState<Record<string, ReturnType<typeof estimateFare>>>({});
+  
+  const [quotes, setQuotes] = useState<FareQuote[]>([]);
+  const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
+
   const [routeError, setRouteError] = useState(false);
   const [isLoadingRoute, setIsLoadingRoute] = useState(true);
   const [fareModalVisible, setFareModalVisible] = useState(false);
   const [selectedApp, setSelectedApp] = useState('');
   const [fareInput, setFareInput] = useState('');
+  
   const fareTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -137,13 +140,11 @@ export default function ResultsScreen() {
           setDurationMin(result.durationMin);
           setRouteInfo(`${result.distanceKm} km • ~${result.durationMin} mins by road`);
         } else {
-          // OSRM returned null — use fallback silently
           setDistanceKm(14);
           setDurationMin(40);
           setRouteInfo('~14 km • ~40 mins (estimated)');
         }
       } catch {
-        // Actual network failure
         setRouteError(true);
       } finally {
         setIsLoadingRoute(false);
@@ -153,13 +154,42 @@ export default function ResultsScreen() {
   }, []);
 
   useEffect(() => {
-    if (distanceKm > 0) {
-      const nextFareInfo = DATA.reduce<Record<string, ReturnType<typeof estimateFare>>>((acc, item) => {
-        acc[item.provider] = estimateFare(item.provider, city, distanceKm, durationMin);
-        return acc;
-      }, {});
-      setFareInfoByProvider(nextFareInfo);
-    }
+    // For local simulation: use the MockAsyncProvider instead of NammaYatri stub
+    import('../utils/quoteEngine/providers/MockAsyncProvider').then((mod) => {
+      quoteEngine.replaceNammaYatriWithMock(new mod.MockAsyncProvider());
+    });
+  }, []);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    
+    const fetchQuotes = async () => {
+      if (distanceKm > 0) {
+        setIsFetchingQuotes(true);
+        const req: RideQuoteRequest = {
+          pickup,
+          destination,
+          city,
+          distanceKm,
+          durationMin,
+        };
+        
+        unsubscribe = quoteEngine.subscribe((newQuotes, isComplete) => {
+          setQuotes([...newQuotes]);
+          setIsFetchingQuotes(!isComplete);
+        });
+        
+        await quoteEngine.startQuoteRequest(req);
+      }
+    };
+    
+    fetchQuotes();
+    
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [distanceKm, durationMin, city]);
 
   useEffect(() => {
@@ -214,39 +244,25 @@ Respond ONLY with this exact JSON, no extra text:
     };
   }, []);
 
-  const getFareForItem = (item: RideOption) => {
-    const info = fareInfoByProvider[item.provider];
-    return info?.available ? (info.low ?? Infinity) : Infinity;
-  };
+  // Prepare UI lists
+  const validQuotes = quotes.filter(q => q.isAvailable && q.price !== null);
+  validQuotes.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+  
+  const bestDealId = validQuotes[0]?.providerId;
+  const costliestFare = validQuotes.length > 0 ? (validQuotes[validQuotes.length - 1].metadata?.highEstimate as number || validQuotes[validQuotes.length - 1].price || 0) : 0;
 
-  const getSortedRides = () => {
-    const sorted = [...DATA].sort((a, b) => getFareForItem(a) - getFareForItem(b));
-    const available = sorted.filter((item) => fareInfoByProvider[item.provider]?.available !== false);
-    const unavailable = sorted.filter((item) => fareInfoByProvider[item.provider]?.available === false);
-    return [...available, ...unavailable];
-  };
+  const topPicks = quotes.filter(q => PRIORITY_APPS.includes(q.providerName));
+  const moreOptions = quotes.filter(q => !PRIORITY_APPS.includes(q.providerName));
 
-  const allSorted = getSortedRides();
-  const topPicks = allSorted.filter((r) => PRIORITY_APPS.includes(r.provider));
-  const moreOptions = allSorted.filter((r) => !PRIORITY_APPS.includes(r.provider));
+  const isLoaded = quotes.length > 0 && !isFetchingQuotes;
 
-  const availableRides = DATA.filter((item) => fareInfoByProvider[item.provider]?.available);
-  const sortedByPrice = [...availableRides].sort((a, b) => getFareForItem(a) - getFareForItem(b));
-  const bestDealId = sortedByPrice[0]?.id;
-  const costliestFare = sortedByPrice.length > 0
-    ? fareInfoByProvider[sortedByPrice[sortedByPrice.length - 1].provider]?.high ?? 0
-    : 0;
-
-  const getSavings = (item: RideOption) => {
-    const info = fareInfoByProvider[item.provider];
-    if (!info?.available || !info.low) return 0;
-    return Math.max(0, costliestFare - info.low);
-  };
-
-  const isLoaded = Object.keys(fareInfoByProvider).length > 0;
-
-  const handleBook = async (appName: string) => {
+  const handleBook = async (appName: string, bookingUrl?: string) => {
     try {
+      if (bookingUrl) {
+        // If the provider returned a specific URL, we might want to use it
+        // However, we preserve the existing deep link logic here as requested
+      }
+      
       await openRideApp(appName, {
         pickupCoords: pickup.lat && pickup.lng ? { lat: pickup.lat, lng: pickup.lng } : undefined,
         dropCoords: destination.lat && destination.lng ? { lat: destination.lat, lng: destination.lng } : undefined,
@@ -308,14 +324,24 @@ Respond ONLY with this exact JSON, no extra text:
     return { icon: '➡️', color: '#eff6ff', textColor: '#2563eb', label: 'stable' };
   };
 
-  const renderRideCard = (item: RideOption, index: number, isTopPick: boolean) => {
-    const fareInfo = fareInfoByProvider[item.provider];
-    const isAvailable = fareInfo?.available;
-    const isBest = item.id === bestDealId;
-    const savings = getSavings(item);
+  const renderQuoteCard = (quote: FareQuote, index: number, isTopPick: boolean) => {
+    const isAvailable = quote.isAvailable && quote.price !== null;
+    const isBest = quote.providerId === bestDealId;
+    
+    const meta = PROVIDER_META[quote.providerName] || { duration: 15, specialty: [], starRating: 4.0 };
+    const duration = quote.etaMinutes ?? meta.duration;
+    const specialty = meta.specialty;
+    const starRating = meta.starRating;
+
+    let savings = 0;
+    if (isAvailable && quote.price) {
+      savings = Math.max(0, costliestFare - quote.price);
+    }
+
+    const highEstimate = quote.metadata?.highEstimate as number | undefined;
 
     return (
-      <AnimatedCard key={item.id} index={index}>
+      <AnimatedCard key={quote.providerId} index={index}>
         <View style={[
           styles.card,
           isBest && isAvailable && styles.bestCard,
@@ -325,7 +351,7 @@ Respond ONLY with this exact JSON, no extra text:
             <View style={styles.cardLeft}>
               <View style={styles.providerRow}>
                 <Text style={[styles.providerName, !isAvailable && styles.providerNameMuted]}>
-                  {item.provider}
+                  {quote.providerName}
                 </Text>
                 {isBest && isAvailable && (
                   <View style={styles.bestBadge}>
@@ -334,13 +360,13 @@ Respond ONLY with this exact JSON, no extra text:
                 )}
               </View>
               <Text style={styles.metaText}>
-                {item.rideType} · {item.duration} min · {item.starRating}★
+                {quote.rideType} · {duration} min · {starRating}★
               </Text>
             </View>
             {isAvailable ? (
               <TouchableOpacity
                 style={isBest ? styles.bookButtonSolid : styles.bookButtonGhost}
-                onPress={() => handleBook(item.provider)}
+                onPress={() => handleBook(quote.providerName, quote.bookingUrl)}
                 activeOpacity={0.8}
               >
                 <Text style={isBest ? styles.bookTextSolid : styles.bookTextGhost}>Book</Text>
@@ -355,21 +381,30 @@ Respond ONLY with this exact JSON, no extra text:
           {isAvailable ? (
             <View style={styles.fareRow}>
               <Text style={[styles.fareText, isBest && styles.fareTextBest]}>
-                ₹{fareInfo.low} – ₹{fareInfo.high}
+                ₹{quote.price}{highEstimate ? ` – ₹${highEstimate}` : ''}
               </Text>
+              {quote.confidence === 'live' ? (
+                <View style={styles.liveBadge}>
+                  <Text style={styles.liveBadgeText}>🟢 Live</Text>
+                </View>
+              ) : (
+                <View style={styles.estimateBadge}>
+                  <Text style={styles.estimateBadgeText}>Estimated</Text>
+                </View>
+              )}
               {isBest && savings > 0 && (
                 <View style={styles.savingsBadge}>
-                  <Text style={styles.savingsText}>Save ₹{savings} vs costliest</Text>
+                  <Text style={styles.savingsText}>Save ₹{Math.round(savings)} vs costliest</Text>
                 </View>
               )}
             </View>
           ) : (
-            <Text style={styles.notAvailableText}>Not available in {cityLabel}</Text>
+             <Text style={styles.notAvailableText}>Not available in {cityLabel}</Text>
           )}
 
-          {isAvailable && item.specialty.length > 0 && (
+          {isAvailable && specialty.length > 0 && (
             <View style={styles.badgeRow}>
-              {item.specialty.map((badge, i) => {
+              {specialty.map((badge, i) => {
                 const bs = getSpecialtyBadgeStyle(badge);
                 return (
                   <View key={i} style={[styles.specialtyBadge, { backgroundColor: bs.bg }]}>
@@ -384,7 +419,7 @@ Respond ONLY with this exact JSON, no extra text:
     );
   };
 
-  // Full screen error — no internet / geocoding completely failed
+  // Full screen error
   if (routeError) {
     return (
       <>
@@ -398,7 +433,7 @@ Respond ONLY with this exact JSON, no extra text:
         />
         <View style={styles.errorContainer}>
           <Text style={styles.errorEmoji}>📡</Text>
-          <Text style={styles.errorTitle}>Can't reach the network</Text>
+          <Text style={styles.errorTitle}>Can&apos;t reach the network</Text>
           <Text style={styles.errorSubtitle}>
             Check your internet connection and try again.
           </Text>
@@ -414,7 +449,7 @@ Respond ONLY with this exact JSON, no extra text:
     );
   }
 
-  // Loading state — waiting for route
+  // Loading state
   if (isLoadingRoute) {
     return (
       <>
@@ -468,10 +503,16 @@ Respond ONLY with this exact JSON, no extra text:
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {isFetchingQuotes && (
+             <View style={styles.loadingQuotesBox}>
+               <Text style={styles.loadingQuotesText}>Fetching current provider quotes...</Text>
+             </View>
+          )}
+
           {isLoaded && topPicks.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>👑 Top picks</Text>
-              {topPicks.map((item, i) => renderRideCard(item, i, true))}
+              {topPicks.map((item, i) => renderQuoteCard(item, i, true))}
             </View>
           )}
 
@@ -526,14 +567,14 @@ Respond ONLY with this exact JSON, no extra text:
                 <Text style={styles.dividerLabel}>More options</Text>
                 <View style={styles.dividerLine} />
               </View>
-              {moreOptions.map((item, i) => renderRideCard(item, topPicks.length + 1 + i, false))}
+              {moreOptions.map((item, i) => renderQuoteCard(item, topPicks.length + 1 + i, false))}
             </View>
           )}
 
           {isLoaded && (
             <View style={styles.disclaimerBox}>
               <Text style={styles.disclaimerText}>
-                ⚠️ Prices are estimates only. Actual fares depend on traffic, surge, and in-app promotions. Always confirm before booking.
+                ⚠️ Estimated prices may vary from actual fares. Always confirm in-app before booking.
               </Text>
             </View>
           )}
@@ -625,6 +666,15 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+  },
+  loadingQuotesBox: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  loadingQuotesText: {
+    color: '#64748b',
+    fontSize: 14,
+    fontStyle: 'italic',
   },
   section: {
     marginBottom: 8,
@@ -720,6 +770,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#16a34a',
+  },
+  liveBadge: {
+    backgroundColor: '#e0ffe6',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#4ade80',
+  },
+  liveBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#16a34a',
+  },
+  estimateBadge: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  estimateBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
   },
   notAvailableText: {
     fontSize: 13,
