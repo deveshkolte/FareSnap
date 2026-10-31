@@ -30,6 +30,11 @@ import {
   getHourlyFareForecast,
 } from '../utils/fareEngine';
 import {
+  FieldCalibrationMap,
+  getCityFieldCalibration,
+  recordFieldCalibrationSample,
+} from '../utils/fareCalibration';
+import {
   fetchLiveAreaSurgeMultipliers,
   fetchRecentCrowdsourcedFares,
   reportFare,
@@ -647,6 +652,9 @@ export default function ResultsScreen() {
   const [areaSurgeMultipliers, setAreaSurgeMultipliers] = useState<
     Record<string, number>
   >({});
+  const [fieldCalibration, setFieldCalibration] = useState<FieldCalibrationMap>(
+    {}
+  );
   const [metroCombo, setMetroCombo] = useState<MetroSplitCombo | null>(null);
   const [ondcLiveQuotes, setOndcLiveQuotes] = useState<FareQuote[]>([]);
 
@@ -789,6 +797,10 @@ export default function ResultsScreen() {
             pickup.address.split(',')[0].trim()
           )
             .then((asm) => setAreaSurgeMultipliers(asm))
+            .catch(() => {});
+
+          getCityFieldCalibration(detected)
+            .then((fc) => setFieldCalibration(fc))
             .catch(() => {});
 
           computeMetroSplitCombo({
@@ -952,6 +964,13 @@ export default function ResultsScreen() {
       let sourceKind: QuoteSourceKind = 'estimated';
       let estimateId: string | undefined;
 
+      // Apply learned self-calibration multiplier from real street observations
+      const learnedMult = fieldCalibration[item.providerName];
+      if (learnedMult && learnedMult !== 1.0) {
+        price = Math.round(price * learnedMult);
+        highPrice = Math.max(price + 10, Math.round(highPrice * learnedMult));
+      }
+
       // Apply Waze-style neighborhood surge multiplier if reported by recent riders
       const areaMult = areaSurgeMultipliers[item.providerName];
       if (areaMult && areaMult !== 1.0 && !crowdsourcedFares[item.providerName]) {
@@ -1037,6 +1056,7 @@ export default function ResultsScreen() {
     areaSurgeMultipliers,
     city,
     crowdsourcedFares,
+    fieldCalibration,
     liveWeather,
     ondcLiveQuotes,
     pickup.address,
@@ -1359,14 +1379,22 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     const parsed = parseFloat(fareInput.trim());
     if (!isNaN(parsed) && parsed > 0 && selectedRide) {
       try {
-        await reportFare({
-          app: selectedRide.providerName,
-          city,
-          pickup_area: pickup.address.split(',')[0].trim(),
-          distance_km: activeDistanceKm,
-          quoted_fare: parsed,
-          app_version: '1.0.0',
-        });
+        await Promise.all([
+          reportFare({
+            app: selectedRide.providerName,
+            city,
+            pickup_area: pickup.address.split(',')[0].trim(),
+            distance_km: activeDistanceKm,
+            quoted_fare: parsed,
+            app_version: '1.0.0',
+          }),
+          recordFieldCalibrationSample({
+            city,
+            providerName: selectedRide.providerName,
+            estimatedFare: selectedRide.price,
+            actualFare: parsed,
+          }).then((updatedMap) => setFieldCalibration(updatedMap)),
+        ]);
       } catch {}
     }
     setFareInput('');
