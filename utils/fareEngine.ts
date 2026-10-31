@@ -17,8 +17,15 @@ export type FareBreakdown = {
   timeFare: number;
   surgeMultiplier: number;
   surgeAmount: number;
+  geofenceFee: number;
   minFareApplied: boolean;
   recommendedBid?: number;
+};
+
+export type EstimateContext = {
+  weatherMultiplier?: number;
+  pickupAddress?: string;
+  isSmartPickup?: boolean;
 };
 
 export type FareEstimate =
@@ -488,7 +495,8 @@ export const estimateFare = (
   appName: string,
   city: CityKey,
   distanceKm: number,
-  durationMin: number
+  durationMin: number,
+  context?: EstimateContext
 ): FareEstimate => {
   const configKey = getConfigKey(appName);
   if (!configKey) {
@@ -510,17 +518,48 @@ export const estimateFare = (
   }
 
   const surgeType = getSurgeType();
-  const surge = appConfig.surge[surgeType];
+  const baseSurge = appConfig.surge[surgeType];
+  const allowsSurge = appConfig.surge.peak > 1.0;
+  const weatherMult =
+    allowsSurge && context?.weatherMultiplier && context.weatherMultiplier > 1.0
+      ? context.weatherMultiplier
+      : 1.0;
+
+  const effectiveSurge = Math.round(baseSurge * weatherMult * 100) / 100;
+
+  // Geofence pickup surcharge (Airport terminal fee or Mall/Tech-Park pickup zone)
+  const addr = (context?.pickupAddress || '').toLowerCase();
+  const isBike =
+    configKey === 'RapidoBike' ||
+    configKey === 'UberMoto' ||
+    configKey === 'OlaBike';
+  const isAuto = configKey.includes('Auto');
+
+  let geofenceFee = 0;
+  if (
+    !isBike &&
+    /\b(airport|kempegowda|csmia|igi airport|rgia|meenambakkam|terminal)\b/i.test(
+      addr
+    )
+  ) {
+    geofenceFee = isAuto ? 40 : 115;
+  } else if (
+    !context?.isSmartPickup &&
+    allowsSurge &&
+    /\b(mall|tech park|manyata|bagmane|ecospace|cyberhub|phoenix)\b/i.test(addr)
+  ) {
+    geofenceFee = isBike ? 0 : isAuto ? 8 : 15;
+  }
+
   const distanceFare = Math.round(rates.perKm * distanceKm);
   const timeFare = Math.round(rates.perMin * durationMin);
   const raw =
     rates.baseFare + rates.perKm * distanceKm + rates.perMin * durationMin;
-  const withSurge = raw * surge;
-  const surgeAmount = Math.max(0, Math.round(withSurge - raw));
+  const withSurge = raw * effectiveSurge + geofenceFee;
+  const surgeAmount = Math.max(0, Math.round(raw * effectiveSurge - raw));
   const minFareApplied = withSurge < rates.minFare;
   const finalFare = Math.max(withSurge, rates.minFare);
 
-  // Calibrated exact fare (no artificial * 0.88 undercutting)
   const low = Math.round(finalFare);
   const high = Math.round(finalFare * 1.12);
 
@@ -531,13 +570,14 @@ export const estimateFare = (
     available: true,
     low,
     high,
-    isSurge: surgeType === 'peak' && surge > 1.0,
+    isSurge: effectiveSurge > 1.05,
     breakdown: {
       baseFare: Math.round(rates.baseFare),
       distanceFare,
       timeFare,
-      surgeMultiplier: surge,
+      surgeMultiplier: effectiveSurge,
       surgeAmount,
+      geofenceFee,
       minFareApplied,
       recommendedBid: isNegotiable ? Math.round(low * 1.04) : undefined,
     },
