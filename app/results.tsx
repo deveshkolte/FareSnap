@@ -28,6 +28,7 @@ import {
   fetchRecentCrowdsourcedFares,
   reportFare,
 } from '../utils/fareReporter';
+import { FareQuote, QuoteEngine } from '../utils/quoteEngine';
 import {
   getLifetimeSavings,
   getLinkedProviders,
@@ -52,7 +53,11 @@ type RideCategoryTab = 'All' | 'Bike' | 'Auto' | 'Cab';
 type SortField = 'fare' | 'eta';
 type SortOrder = 'asc' | 'desc';
 
-type QuoteSourceKind = 'live_scraped' | 'community_verified' | 'estimated';
+type QuoteSourceKind =
+  | 'live_scraped'
+  | 'ondc_live'
+  | 'community_verified'
+  | 'estimated';
 
 type FlatRideOption = {
   id: string;
@@ -489,6 +494,8 @@ const CITY_LABELS: Record<CityKey, string> = {
   default: 'your city',
 };
 
+const quoteEngine = new QuoteEngine();
+
 const buildLocalFallbackInsight = (
   surgeStatus: 'peak' | 'normal' | 'off-peak',
   cheapestOption?: FlatRideOption
@@ -603,10 +610,11 @@ export default function ResultsScreen() {
     Partial<Record<LinkableProviderId, boolean>>
   >({});
 
-  // Crowdsourced rider calibration map
+  // Crowdsourced rider calibration map & ONDC Beckn live quotes
   const [crowdsourcedFares, setCrowdsourcedFares] = useState<
     Record<string, number>
   >({});
+  const [ondcLiveQuotes, setOndcLiveQuotes] = useState<FareQuote[]>([]);
 
   // BuyHatke Booking Flow Sheets
   const [confirmRideSheetVisible, setConfirmRideSheetVisible] = useState(false);
@@ -732,6 +740,48 @@ export default function ResultsScreen() {
     loadCityAndRoute();
   }, [pickup, destination]);
 
+  // Subscribe to QuoteEngine for live ONDC Beckn `/on_search` quotes
+  useEffect(() => {
+    if (activeDistanceKm <= 0) return;
+
+    const unsubscribe = quoteEngine.subscribe((incomingQuotes) => {
+      const liveOnes = incomingQuotes.filter(
+        (q) => q.source === 'live_provider' && q.price !== null
+      );
+      if (liveOnes.length > 0) {
+        setOndcLiveQuotes(liveOnes);
+      }
+    });
+
+    quoteEngine
+      .startQuoteRequest({
+        pickup: {
+          address: pickup.address,
+          lat: activePickupCoords?.lat,
+          lng: activePickupCoords?.lng,
+        },
+        destination: {
+          address: destination.address,
+          lat: resolvedDropCoords?.lat,
+          lng: resolvedDropCoords?.lng,
+        },
+        city,
+        distanceKm: activeDistanceKm,
+        durationMin: activeDurationMin,
+      })
+      .catch(() => {});
+
+    return () => unsubscribe();
+  }, [
+    activeDistanceKm,
+    activeDurationMin,
+    city,
+    pickup.address,
+    destination.address,
+    activePickupCoords,
+    resolvedDropCoords,
+  ]);
+
   // Build flat list of all ride products merging:
   // 1) Real WebView-scraped products (`scrapedLiveProducts`) when available
   // 2) Community-verified fares from Supabase (`crowdsourcedFares`)
@@ -764,6 +814,24 @@ export default function ResultsScreen() {
         price = Math.round(price * 0.65 + crowdFare * 0.35);
         highPrice = Math.max(price + 12, Math.round(price * 1.18));
         sourceKind = 'community_verified';
+      }
+
+      // Check if ONDC Beckn Gateway returned a live quote for this provider/item
+      const matchingOndc = ondcLiveQuotes.find(
+        (oq) =>
+          oq.providerName.toLowerCase() === item.providerName.toLowerCase() &&
+          (oq.rideType.toLowerCase() === item.productName.toLowerCase() ||
+            item.matchAliases.includes(oq.rideType.toLowerCase()))
+      );
+      if (matchingOndc && typeof matchingOndc.price === 'number') {
+        price = matchingOndc.price;
+        highPrice =
+          (matchingOndc.metadata?.highEstimate as number | undefined) ||
+          Math.round(price * 1.08);
+        if (matchingOndc.etaMinutes) {
+          etaMinutes = matchingOndc.etaMinutes;
+        }
+        sourceKind = 'ondc_live';
       }
 
       // Check if LiveFareScraperPool intercepted an actual live price for this product
@@ -814,6 +882,7 @@ export default function ResultsScreen() {
     activeDurationMin,
     city,
     crowdsourcedFares,
+    ondcLiveQuotes,
     scrapedLiveProducts,
     smartPickupEnabled,
     smartPickup,
@@ -1450,6 +1519,8 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                         </Text>
                         {item.sourceKind === 'live_scraped' ? (
                           <Text style={styles.liveDotLabel}>· 🟢 LIVE</Text>
+                        ) : item.sourceKind === 'ondc_live' ? (
+                          <Text style={styles.liveDotLabel}>· 🟢 ONDC Live</Text>
                         ) : item.sourceKind === 'community_verified' ? (
                           <Text style={styles.liveDotLabel}>· 👥 Verified</Text>
                         ) : (

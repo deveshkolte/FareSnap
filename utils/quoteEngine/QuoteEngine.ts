@@ -1,5 +1,6 @@
 import { CityKey } from '../cityDetector';
 import { FareSnapEstimateProvider } from './providers/FareSnapEstimateProvider';
+import { OndcBecknProvider } from './providers/OndcBecknProvider';
 import { NammaYatriStubProvider, OlaStubProvider, RapidoStubProvider, UberStubProvider } from './providers/StubProviders';
 import { FareQuote, RideProvider, RideQuoteRequest } from './types';
 
@@ -21,6 +22,7 @@ export class QuoteEngine {
       new OlaStubProvider(),
       new RapidoStubProvider(),
       new NammaYatriStubProvider(),
+      new OndcBecknProvider(),
       new FareSnapEstimateProvider(),
     ];
     

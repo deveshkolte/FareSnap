@@ -18,6 +18,7 @@ export type ScraperBridgeMessage =
       type: 'AUTH_STATUS';
       providerId: LinkableProviderId;
       isLoggedIn: boolean;
+      challengeRequired?: boolean;
       currentUrl: string;
     }
   | {
@@ -334,7 +335,12 @@ export const buildProviderScraperScript = (providerId: LinkableProviderId): stri
       var href = location.href.toLowerCase();
       var bodyText = document.body ? document.body.innerText : '';
 
+      var isChallenge =
+        Boolean(document.querySelector('iframe[src*="challenges.cloudflare.com"], #challenge-running, #cf-please-wait')) ||
+        /verify you are human|security check/i.test(bodyText);
+
       var isAuthWall =
+        isChallenge ||
         href.indexOf('auth.uber.com') !== -1 ||
         href.indexOf('login') !== -1 ||
         href.indexOf('signin') !== -1 ||
@@ -403,6 +409,7 @@ export const buildProviderScraperScript = (providerId: LinkableProviderId): stri
           type: 'AUTH_STATUS',
           providerId: PROVIDER_ID,
           isLoggedIn: !isAuthWall,
+          challengeRequired: isChallenge,
           currentUrl: location.href
         });
       }

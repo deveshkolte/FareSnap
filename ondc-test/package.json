@@ -1,0 +1,12 @@
+{
+  "name": "faresnap-ondc-bap-server",
+  "version": "1.0.0",
+  "description": "ONDC Beckn Mobility (ONDC:TRV10) Buyer App (BAP) Gateway & AI Proxy for FareSnap",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
