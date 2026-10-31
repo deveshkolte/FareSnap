@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -18,6 +20,11 @@ import {
   ScrapedLiveProduct,
   ScraperBridgeMessage,
 } from '../utils/liveSessionBridge';
+import {
+  sendNammaYatriOtp,
+  setStoredNammaYatriToken,
+  verifyNammaYatriOtp,
+} from '../utils/nammaYatriDirectApi';
 
 type RouteBookingOpts = {
   pickupLat: number;
@@ -55,6 +62,13 @@ export function LinkAppsModal({
     useState<LinkableProviderInfo | null>(null);
   const [detectedLoggedIn, setDetectedLoggedIn] = useState(false);
 
+  // Direct API OTP state for Namma Yatri (api.moving.tech)
+  const [nyPhone, setNyPhone] = useState('');
+  const [nyOtp, setNyOtp] = useState('');
+  const [nyAuthId, setNyAuthId] = useState<string | null>(null);
+  const [nyLoading, setNyLoading] = useState(false);
+  const [nyError, setNyError] = useState('');
+
   useEffect(() => {
     if (visible && initialProviderId) {
       const found = LINKABLE_PROVIDERS.find((p) => p.id === initialProviderId);
@@ -62,8 +76,41 @@ export function LinkAppsModal({
     } else if (!visible) {
       setActiveWebProvider(null);
       setDetectedLoggedIn(false);
+      setNyAuthId(null);
+      setNyOtp('');
+      setNyError('');
     }
   }, [visible, initialProviderId]);
+
+  const handleNySendOtp = async () => {
+    setNyError('');
+    setNyLoading(true);
+    try {
+      const res = await sendNammaYatriOtp(nyPhone);
+      setNyAuthId(res.authId);
+    } catch (err: any) {
+      setNyError(err?.message || 'Could not send OTP.');
+    } finally {
+      setNyLoading(false);
+    }
+  };
+
+  const handleNyVerifyOtp = async () => {
+    if (!nyAuthId) return;
+    setNyError('');
+    setNyLoading(true);
+    try {
+      await verifyNammaYatriOtp(nyAuthId, nyOtp);
+      onToggleLink('namma_yatri', true);
+      setActiveWebProvider(null);
+      setNyAuthId(null);
+      setNyOtp('');
+    } catch (err: any) {
+      setNyError(err?.message || 'Invalid OTP.');
+    } finally {
+      setNyLoading(false);
+    }
+  };
 
   const linkedProviders = LINKABLE_PROVIDERS.filter((p) => linkedMap[p.id]);
   const unlinkedProviders = LINKABLE_PROVIDERS.filter((p) => !linkedMap[p.id]);
@@ -132,7 +179,83 @@ export function LinkAppsModal({
             </TouchableOpacity>
           </View>
 
-          {Platform.OS === 'web' ? (
+          {activeWebProvider.id === 'namma_yatri' && !routeOpts?.autoSelectProduct ? (
+            <View style={styles.nyOtpContainer}>
+              <View style={styles.nyBrandBadge}>
+                <Text style={styles.nyBrandBadgeText}>NY</Text>
+              </View>
+              <Text style={styles.nyTitle}>Link Namma Yatri via OTP</Text>
+              <Text style={styles.nySubtitle}>
+                Connects directly to Namma Yatri (api.moving.tech) for live zero-surge Auto & Cab fares.
+              </Text>
+
+              {!nyAuthId ? (
+                <>
+                  <TextInput
+                    style={styles.nyInput}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    placeholder="Enter 10-digit mobile number"
+                    placeholderTextColor="#94a3b8"
+                    value={nyPhone}
+                    onChangeText={setNyPhone}
+                  />
+                  {nyError ? (
+                    <Text style={styles.nyErrorText}>{nyError}</Text>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.nyPrimaryBtn}
+                    onPress={handleNySendOtp}
+                    disabled={nyLoading}
+                  >
+                    {nyLoading ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.nyPrimaryBtnText}>Send OTP →</Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    style={styles.nyInput}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    placeholder="Enter 4-digit OTP"
+                    placeholderTextColor="#94a3b8"
+                    value={nyOtp}
+                    onChangeText={setNyOtp}
+                  />
+                  {nyError ? (
+                    <Text style={styles.nyErrorText}>{nyError}</Text>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.nyPrimaryBtn}
+                    onPress={handleNyVerifyOtp}
+                    disabled={nyLoading}
+                  >
+                    {nyLoading ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.nyPrimaryBtnText}>Verify & Link ✓</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ marginTop: 14 }}
+                    onPress={() => {
+                      setNyAuthId(null);
+                      setNyOtp('');
+                      setNyError('');
+                    }}
+                  >
+                    <Text style={styles.nyChangePhoneText}>
+                      Change phone number
+                    </Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          ) : Platform.OS === 'web' ? (
             <View style={styles.webBrowserFallback}>
               <Text style={styles.webFallbackTitle}>
                 Connect {activeWebProvider.name}
@@ -145,10 +268,11 @@ export function LinkAppsModal({
             <WebView
               source={{ uri: getWebViewUrl(activeWebProvider) }}
               injectedJavaScriptBeforeContentLoaded={buildProviderScraperScript(
-                activeWebProvider.id
+                activeWebProvider.id,
+                routeOpts
               )}
               injectedJavaScript={
-                buildProviderScraperScript(activeWebProvider.id) +
+                buildProviderScraperScript(activeWebProvider.id, routeOpts) +
                 (routeOpts?.autoSelectProduct
                   ? buildAutoSelectVehicleScript(routeOpts.autoSelectProduct)
                   : '')
@@ -237,7 +361,12 @@ export function LinkAppsModal({
                 <TouchableOpacity
                   style={styles.linkedStatusRow}
                   onPress={() => setActiveWebProvider(p)}
-                  onLongPress={() => onToggleLink(p.id, false)}
+                  onLongPress={() => {
+                    if (p.id === 'namma_yatri') {
+                      setStoredNammaYatriToken(null).catch(() => {});
+                    }
+                    onToggleLink(p.id, false);
+                  }}
                 >
                   <Text style={styles.linkedText}>Linked</Text>
                   <View style={styles.greenCheckCircle}>
@@ -540,5 +669,74 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#64748b',
     textAlign: 'center',
+  },
+  nyOtpContainer: {
+    flex: 1,
+    paddingHorizontal: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nyBrandBadge: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#f59e0b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  nyBrandBadgeText: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  nyTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  nySubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 24,
+  },
+  nyInput: {
+    width: '100%',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  nyErrorText: {
+    fontSize: 13,
+    color: '#dc2626',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  nyPrimaryBtn: {
+    width: '100%',
+    backgroundColor: '#4338ca',
+    paddingVertical: 16,
+    borderRadius: 28,
+    alignItems: 'center',
+  },
+  nyPrimaryBtnText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  nyChangePhoneText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4338ca',
   },
 });

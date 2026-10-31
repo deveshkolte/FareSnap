@@ -47,6 +47,7 @@ import {
   computeSmartPickup,
   SmartPickupSuggestion,
 } from '../utils/smartPickupEngine';
+import { fetchNammaYatriLiveFares } from '../utils/nammaYatriDirectApi';
 import {
   fetchLiveWeatherSurge,
   LiveWeatherSurgeInfo,
@@ -825,6 +826,48 @@ export default function ResultsScreen() {
     destination.address,
     activePickupCoords,
     resolvedDropCoords,
+  ]);
+
+  // Query Namma Yatri's direct production API (`api.moving.tech`) if user linked NY via OTP
+  useEffect(() => {
+    if (
+      !linkedProviders.namma_yatri ||
+      !activePickupCoords ||
+      !resolvedDropCoords
+    ) {
+      return;
+    }
+
+    fetchNammaYatriLiveFares({
+      pickupLat: activePickupCoords.lat,
+      pickupLng: activePickupCoords.lng,
+      pickupAddress:
+        smartPickupEnabled && smartPickup
+          ? smartPickup.pickupLabel
+          : pickup.address,
+      dropLat: resolvedDropCoords.lat,
+      dropLng: resolvedDropCoords.lng,
+      dropAddress: destination.address,
+      cityLabel: CITY_LABELS[city],
+    })
+      .then((products) => {
+        if (products.length > 0) {
+          setScrapedLiveProducts((prev) => ({
+            ...prev,
+            namma_yatri: products,
+          }));
+        }
+      })
+      .catch(() => {});
+  }, [
+    linkedProviders.namma_yatri,
+    activePickupCoords,
+    resolvedDropCoords,
+    smartPickupEnabled,
+    smartPickup,
+    pickup.address,
+    destination.address,
+    city,
   ]);
 
   // Build flat list of all ride products merging:
