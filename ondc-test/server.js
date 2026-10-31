@@ -607,6 +607,60 @@ function createServer() {
       });
     }
 
+    // ONDC Domain Verification & Registry Challenge Endpoints (Phase 4)
+    if (req.method === 'GET' && url.pathname === '/ondc-site-verification.html') {
+      const signedToken = process.env.ONDC_SITE_VERIFICATION_SIGNED_TOKEN || 'ONDC_VERIFICATION_READY';
+      const html = `<!DOCTYPE html><html><head><meta name="ondc-site-verification" content="${signedToken}" /></head><body>ONDC Site Verification: ${ONDC_BAP_ID}</body></html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/ondc/on_subscribe') {
+      try {
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, {
+          answer: body?.challenge || 'ONDC_SUBSCRIBE_ACK',
+        });
+      } catch (err) {
+        return sendJson(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    // Play Store Privacy Policy & Independent Utility Disclosure Page (Phase 4)
+    if (req.method === 'GET' && url.pathname === '/privacy') {
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FareSnap Privacy Policy & Disclosure</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #f8fafc; color: #0f172a; max-width: 720px; margin: 0 auto; padding: 32px 20px; line-height: 1.6; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; }
+    h1 { font-size: 24px; margin-top: 0; }
+    h2 { font-size: 17px; margin-top: 20px; color: #1e293b; }
+    p, li { font-size: 14px; color: #475569; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>FareSnap Privacy Policy & Independent Utility Disclosure</h1>
+    <p><strong>Effective Date:</strong> October 2026</p>
+    <h2>1. Independent Commuter Comparison Utility</h2>
+    <p>FareSnap is an independent commuter fare comparison and analytics utility. FareSnap is not affiliated with, endorsed by, or sponsored by Uber, Ola, Rapido, Namma Yatri, InDrive, Meru Cabs, Savaari, or Bharat Cab.</p>
+    <h2>2. Local Device Session & OTP Privacy</h2>
+    <p>When you optionally link a ride-hailing account via an integrated browser or OTP, all session cookies and authentication tokens are stored strictly locally on your mobile device (<code>AsyncStorage</code> / device WebView cookie jar). FareSnap never transmits or stores your passwords, OTPs, or personal account cookies on any external server.</p>
+    <h2>3. Location & Route Data</h2>
+    <p>Pickup and destination coordinates are used solely to calculate road distance, local weather-radar surge forecasts, Smart Pickup walking junctions, and multi-modal Metro split routes.</p>
+    <h2>4. Anonymous Community Fare Calibration</h2>
+    <p>Aggregated, non-identifiable route distance and fare amounts may be contributed to the community surge pool to help commuters see neighborhood surge multipliers.</p>
+  </div>
+</body>
+</html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+
     // 4. POST & GET /fare-reports — Waze-style crowdsourced fare & neighborhood surge pool
     if (url.pathname === '/fare-reports') {
       if (req.method === 'POST') {

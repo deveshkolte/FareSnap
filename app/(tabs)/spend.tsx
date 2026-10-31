@@ -168,6 +168,13 @@ export default function SpendLensScreen() {
             ))
           )}
         </View>
+        {/* Play Store Compliance & Privacy Disclosure */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Privacy & Disclosure</Text>
+          <Text style={styles.emptySub}>
+            FareSnap is an independent commuter comparison utility and is not affiliated with Uber, Ola, Rapido, Namma Yatri, InDrive, Meru, or Bharat Cab. Optional account sessions stay strictly on your device.
+          </Text>
+        </View>
       </ScrollView>
     </View>
   );

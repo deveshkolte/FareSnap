@@ -909,6 +909,7 @@ export default function ResultsScreen() {
     pickup.address,
     destination.address,
     city,
+    activeDistanceKm,
   ]);
 
   // Build flat list of all ride products merging:
