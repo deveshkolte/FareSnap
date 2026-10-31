@@ -53,7 +53,11 @@ export function LiveFareScraperPool({
     return null;
   }
 
-  const activeProviders = LINKABLE_PROVIDERS.filter((p) => linkedMap[p.id]);
+  // Always include Rapido PWA (`m.rapido.bike`) because its `unup` (unauthenticated)
+  // Angular bridge (`window.unupFe.component.getUnupFareEstimate()`) works even before login!
+  const activeProviders = LINKABLE_PROVIDERS.filter(
+    (p) => linkedMap[p.id] || p.id === 'rapido'
+  );
   if (activeProviders.length === 0) {
     return null;
   }
@@ -72,8 +76,10 @@ export function LiveFareScraperPool({
         const script = buildProviderScraperScript(provider.id, {
           pickupLat,
           pickupLng,
+          pickupAddress,
           dropLat,
           dropLng,
+          dropAddress,
         });
 
         return (

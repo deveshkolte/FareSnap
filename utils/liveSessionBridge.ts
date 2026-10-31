@@ -148,8 +148,10 @@ export const buildProviderScraperScript = (
   coords?: {
     pickupLat?: number;
     pickupLng?: number;
+    pickupAddress?: string;
     dropLat?: number;
     dropLng?: number;
+    dropAddress?: string;
   }
 ): string => `
 (function() {
@@ -159,8 +161,10 @@ export const buildProviderScraperScript = (
   var PROVIDER_ID = '${providerId}';
   var P_LAT = ${coords?.pickupLat ?? 'null'};
   var P_LNG = ${coords?.pickupLng ?? 'null'};
+  var P_ADDR = ${JSON.stringify(coords?.pickupAddress || 'Pickup')};
   var D_LAT = ${coords?.dropLat ?? 'null'};
   var D_LNG = ${coords?.dropLng ?? 'null'};
+  var D_ADDR = ${JSON.stringify(coords?.dropAddress || 'Destination')};
   var PROVIDER_NAME =
     PROVIDER_ID === 'uber' ? 'Uber' :
     PROVIDER_ID === 'ola' ? 'Ola' :
@@ -462,6 +466,104 @@ export const buildProviderScraperScript = (
             confirmBtns[i].click();
             break;
           }
+        }
+      }
+
+      // C) Rapido Angular PWA (m.rapido.bike) window.unupFe.component bridge
+      if (PROVIDER_ID === 'rapido' && P_LAT && P_LNG && D_LAT && D_LNG) {
+        var tryRapidoAngularBridge = function() {
+          try {
+            var fe = window.unupFe;
+            if (!fe || !fe.component) return false;
+            var comp = fe.component;
+            var mkRapidoLoc = function(lat, lng, addr) {
+              return {
+                lat: lat,
+                lng: lng,
+                displayName: addr,
+                address: addr,
+                getLat: function() { return lat; },
+                getLong: function() { return lng; },
+                getDisplayName: function() { return addr; },
+                getAddress: function() { return addr; },
+                toJSON: function() {
+                  return { lat: lat, lng: lng, displayName: addr, address: addr };
+                }
+              };
+            };
+            var pLoc = mkRapidoLoc(P_LAT, P_LNG, P_ADDR);
+            var dLoc = mkRapidoLoc(D_LAT, D_LNG, D_ADDR);
+
+            var invokeInZone = function(fn) {
+              if (fe.zone && typeof fe.zone.run === 'function') {
+                fe.zone.run(fn);
+              } else {
+                fn();
+              }
+            };
+
+            invokeInZone(function() {
+              if (typeof comp.hidePickupLocation === 'function') {
+                comp.hidePickupLocation(pLoc);
+              }
+              if (typeof comp.hideDropLocation === 'function') {
+                comp.hideDropLocation(dLoc);
+              }
+              if (comp.pricingService) {
+                comp.pricingService.unupPickUpLocation = pLoc;
+                comp.pricingService.unupDropLocation = dLoc;
+                if (typeof comp.pricingService.getUnupFareEstimate === 'function') {
+                  comp.pricingService.getUnupFareEstimate();
+                }
+                if (typeof comp.pricingService.getFareEstimate === 'function') {
+                  comp.pricingService.getFareEstimate();
+                }
+              }
+            });
+
+            // Poll comp.filteredServices for decoded Rapido quotes
+            var checkServices = setInterval(function() {
+              try {
+                var list = comp.filteredServices || comp.services || [];
+                var extracted = [];
+                for (var idx = 0; idx < list.length; idx++) {
+                  var srv = list[idx];
+                  var q = srv && srv.quote ? srv.quote : null;
+                  var amt = q ? parsePriceNumber(q.amount || q.finalAmount || q.fareMin) : null;
+                  if (amt !== null) {
+                    var sName = String(srv.displayName || srv.serviceDisplayName || srv.name || 'Bike');
+                    extracted.push({
+                      providerId: 'rapido',
+                      providerName: 'Rapido',
+                      productName: sName === 'Bike' ? 'Bike Direct' : sName === 'Car' ? 'Cab AC' : sName,
+                      category: classifyCategory(sName),
+                      price: amt,
+                      etaMinutes: 4
+                    });
+                  }
+                }
+                if (extracted.length > 0) {
+                  clearInterval(checkServices);
+                  postToHost({
+                    source: 'bh-page-api',
+                    type: 'LIVE_PRODUCTS_SCRAPED',
+                    providerId: 'rapido',
+                    products: extracted,
+                    currentUrl: location.href,
+                    timestamp: Date.now()
+                  });
+                }
+              } catch (e) {}
+            }, 900);
+
+            return true;
+          } catch (e) {
+            return false;
+          }
+        };
+
+        if (!tryRapidoAngularBridge()) {
+          setTimeout(tryRapidoAngularBridge, 1800);
         }
       }
     } catch (e) {}
