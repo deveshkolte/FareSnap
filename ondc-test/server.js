@@ -1,5 +1,35 @@
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+// Auto-load root .env file if present (zero external dependencies)
+(function loadDotEnv() {
+  const envPaths = [
+    path.resolve(__dirname, '..', '.env'),
+    path.resolve(__dirname, '.env'),
+  ];
+  for (const envPath of envPaths) {
+    try {
+      if (!fs.existsSync(envPath)) continue;
+      const content = fs.readFileSync(envPath, 'utf8');
+      for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx <= 0) continue;
+        const key = line.slice(0, eqIdx).trim();
+        const val = line
+          .slice(eqIdx + 1)
+          .trim()
+          .replace(/^['"]|['"]$/g, '');
+        if (key && !process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    } catch {}
+  }
+})();
 
 const PORT = Number(process.env.PORT || 4040);
 const ONDC_GATEWAY_URL = process.env.ONDC_GATEWAY_URL || '';
@@ -7,10 +37,16 @@ const ONDC_BAP_ID = process.env.ONDC_BAP_ID || 'faresnap.bap.ondc.org';
 const ONDC_BAP_URI = process.env.ONDC_BAP_URI || `http://localhost:${PORT}/ondc`;
 const ONDC_BAP_PRIVATE_KEY = process.env.ONDC_BAP_PRIVATE_KEY || '';
 const ONDC_UNIQUE_KEY_ID = process.env.ONDC_UNIQUE_KEY_ID || 'faresnap-key-1';
-const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
+const GROQ_API_KEY =
+  process.env.GROQ_API_KEY || process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
+const GEMINI_API_KEY =
+  process.env.GEMINI_API_KEY || process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
 
 // In-memory store of active ONDC transaction_id -> { status, quotes, createdAt, request }
 const transactions = new Map();
+
+// Waze-style crowdsourced fare & surge report pool (in-memory ring buffer of last 500 reports)
+const fareReportsPool = [];
 
 // Cleanup old transactions every 5 minutes
 setInterval(() => {
@@ -41,11 +77,17 @@ const CITY_STD_CODES = {
 function createBecknAuthorizationHeader(bodyString) {
   const created = Math.floor(Date.now() / 1000);
   const expires = created + 300;
-  const digest = crypto.createHash('blake2b512').update(bodyString).digest('base64');
+  const digest = crypto
+    .createHash('blake2b512')
+    .update(bodyString)
+    .digest('base64');
   const signingString = `(created): ${created}\n(expires): ${expires}\ndigest: BLAKE-512=${digest}`;
 
   if (!ONDC_BAP_PRIVATE_KEY) {
-    const mockSig = crypto.createHash('sha256').update(signingString).digest('base64');
+    const mockSig = crypto
+      .createHash('sha256')
+      .update(signingString)
+      .digest('base64');
     return `Signature keyId="${ONDC_BAP_ID}|${ONDC_UNIQUE_KEY_ID}|ed25519",algorithm="ed25519",created="${created}",expires="${expires}",headers="(created) (expires) digest",signature="${mockSig}"`;
   }
 
@@ -55,7 +97,9 @@ function createBecknAuthorizationHeader(bodyString) {
       format: 'der',
       type: 'pkcs8',
     });
-    const signature = crypto.sign(null, Buffer.from(signingString, 'utf8'), privateKeyObj).toString('base64');
+    const signature = crypto
+      .sign(null, Buffer.from(signingString, 'utf8'), privateKeyObj)
+      .toString('base64');
     return `Signature keyId="${ONDC_BAP_ID}|${ONDC_UNIQUE_KEY_ID}|ed25519",algorithm="ed25519",created="${created}",expires="${expires}",headers="(created) (expires) digest",signature="${signature}"`;
   } catch {
     return '';
@@ -131,23 +175,35 @@ function parseBecknOnSearchCatalog(BecknBody, distanceKm) {
     }
 
     for (const item of provider?.items || []) {
-      const priceVal = parseFloat(item?.price?.value ?? item?.price?.estimated_value ?? '0');
+      const priceVal = parseFloat(
+        item?.price?.value ?? item?.price?.estimated_value ?? '0'
+      );
       if (!Number.isFinite(priceVal) || priceVal <= 0) continue;
 
-      const maxVal = parseFloat(item?.price?.maximum_value ?? String(Math.round(priceVal * 1.1)));
-      const f = fulfillmentsById.get(item?.fulfillment_ids?.[0] || item?.fulfillment_id);
-      const vehicleCategory = f?.vehicle?.category || item?.descriptor?.code || 'AUTO_RICKSHAW';
+      const maxVal = parseFloat(
+        item?.price?.maximum_value ?? String(Math.round(priceVal * 1.1))
+      );
+      const f = fulfillmentsById.get(
+        item?.fulfillment_ids?.[0] || item?.fulfillment_id
+      );
+      const vehicleCategory =
+        f?.vehicle?.category || item?.descriptor?.code || 'AUTO_RICKSHAW';
       const itemName = item?.descriptor?.name || vehicleCategory;
 
       let rideType = 'Cab';
       if (/AUTO/i.test(vehicleCategory) || /Auto/i.test(itemName)) {
         rideType = 'Auto';
-      } else if (/BIKE|TWO_WHEELER|MOTO/i.test(vehicleCategory) || /Bike/i.test(itemName)) {
+      } else if (
+        /BIKE|TWO_WHEELER|MOTO/i.test(vehicleCategory) ||
+        /Bike/i.test(itemName)
+      ) {
         rideType = 'Bike';
       }
 
       quotes.push({
-        providerId: `${provider.id || providerName.toLowerCase().replace(/\s+/g, '_')}_${item.id || rideType.toLowerCase()}`,
+        providerId: `${
+          provider.id || providerName.toLowerCase().replace(/\s+/g, '_')
+        }_${item.id || rideType.toLowerCase()}`,
         providerName,
         rideType: itemName,
         price: Math.round(priceVal * 100) / 100,
@@ -172,7 +228,7 @@ function parseBecknOnSearchCatalog(BecknBody, distanceKm) {
 }
 
 /**
- * Generates a realistic Beckn `/on_search` catalog for Namma Yatri & Bharat Taxi
+ * Generates a realistic Beckn `/on_search` catalog for Namma Yatri & Bharat Cab
  * when operating in local sandbox mode without an external BPP webhook URL.
  */
 function buildSandboxBecknOnSearch(transactionId, reqData) {
@@ -243,7 +299,9 @@ function buildSandboxBecknOnSearch(transactionId, reqData) {
           {
             id: 'bharat_cab_ondc',
             descriptor: { name: 'Bharat Cab' },
-            fulfillments: [{ id: 'f_bharat_mini', vehicle: { category: 'HATCHBACK' } }],
+            fulfillments: [
+              { id: 'f_bharat_mini', vehicle: { category: 'HATCHBACK' } },
+            ],
             items: [
               {
                 id: 'bc_mini',
@@ -290,7 +348,7 @@ function sendJson(res, statusCode, payload) {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, Prefer',
   });
   res.end(body);
 }
@@ -308,7 +366,9 @@ function createServer() {
       return sendJson(res, 200, {
         status: 'ok',
         bapId: ONDC_BAP_ID,
+        aiProxyReady: Boolean(GROQ_API_KEY || GEMINI_API_KEY),
         activeTransactions: transactions.size,
+        pooledFareReports: fareReportsPool.length,
       });
     }
 
@@ -317,7 +377,10 @@ function createServer() {
       try {
         const reqData = await readJsonBody(req);
         const transactionId = crypto.randomUUID();
-        const becknSearchPayload = buildBecknSearchPayload(transactionId, reqData);
+        const becknSearchPayload = buildBecknSearchPayload(
+          transactionId,
+          reqData
+        );
         const bodyString = JSON.stringify(becknSearchPayload);
         const authHeader = createBecknAuthorizationHeader(bodyString);
 
@@ -343,7 +406,10 @@ function createServer() {
           setTimeout(() => {
             const tx = transactions.get(transactionId);
             if (!tx) return;
-            const sandboxCallback = buildSandboxBecknOnSearch(transactionId, reqData);
+            const sandboxCallback = buildSandboxBecknOnSearch(
+              transactionId,
+              reqData
+            );
             const parsedQuotes = parseBecknOnSearchCatalog(
               sandboxCallback,
               reqData.distanceKm
@@ -370,7 +436,10 @@ function createServer() {
         const txId = body?.context?.transaction_id;
         if (txId && transactions.has(txId)) {
           const tx = transactions.get(txId);
-          const newQuotes = parseBecknOnSearchCatalog(body, tx.request?.distanceKm);
+          const newQuotes = parseBecknOnSearchCatalog(
+            body,
+            tx.request?.distanceKm
+          );
           tx.quotes.push(...newQuotes);
           tx.status = 'completed';
         }
@@ -396,23 +465,109 @@ function createServer() {
       });
     }
 
-    // 4. POST /proxy/ai-insight — Server-side Groq proxy so API keys stay off the client APK
+    // 4. POST & GET /fare-reports — Waze-style crowdsourced fare & neighborhood surge pool
+    if (url.pathname === '/fare-reports') {
+      if (req.method === 'POST') {
+        try {
+          const body = await readJsonBody(req);
+          if (
+            body &&
+            body.app &&
+            body.city &&
+            Number(body.quoted_fare) > 15 &&
+            Number(body.distance_km) > 0
+          ) {
+            fareReportsPool.unshift({
+              id: fareReportsPool.length + 1,
+              app: String(body.app),
+              city: String(body.city).toLowerCase(),
+              pickup_area: String(body.pickup_area || ''),
+              distance_km: Number(body.distance_km),
+              quoted_fare: Number(body.quoted_fare),
+              created_at: new Date().toISOString(),
+            });
+            if (fareReportsPool.length > 500) {
+              fareReportsPool.length = 500;
+            }
+          }
+          return sendJson(res, 201, { ok: true });
+        } catch (err) {
+          return sendJson(res, 400, { error: String(err.message || err) });
+        }
+      }
+
+      if (req.method === 'GET') {
+        const city = (url.searchParams.get('city') || '').toLowerCase();
+        const minKm = Number(url.searchParams.get('minKm') || 0);
+        const maxKm = Number(url.searchParams.get('maxKm') || 9999);
+        const filtered = fareReportsPool
+          .filter(
+            (r) =>
+              (!city || r.city === city) &&
+              r.distance_km >= minKm &&
+              r.distance_km <= maxKm
+          )
+          .slice(0, 30);
+        return sendJson(res, 200, filtered);
+      }
+    }
+
+    // 5. POST /proxy/ai-insight — Server-side Groq + Gemini fallback proxy so API keys stay off the client APK
     if (req.method === 'POST' && url.pathname === '/proxy/ai-insight') {
       try {
         const body = await readJsonBody(req);
-        if (!GROQ_API_KEY) {
-          return sendJson(res, 503, { error: 'GROQ_API_KEY not configured on server' });
+
+        // Try Groq first if configured
+        if (GROQ_API_KEY) {
+          try {
+            const upstream = await fetch(
+              'https://api.groq.com/openai/v1/chat/completions',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${GROQ_API_KEY}`,
+                },
+                body: JSON.stringify(body),
+              }
+            );
+            if (upstream.ok) {
+              const data = await upstream.json();
+              return sendJson(res, 200, data);
+            }
+          } catch {}
         }
-        const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${GROQ_API_KEY}`,
-          },
-          body: JSON.stringify(body),
+
+        // Fallback to Google Gemini if Groq is unavailable or rate-limited
+        if (GEMINI_API_KEY) {
+          const promptText =
+            body?.messages?.[0]?.content ||
+            'Analyze Indian ride-hailing fares and return JSON.';
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(
+              GEMINI_API_KEY
+            )}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }],
+              }),
+            }
+          );
+          if (geminiRes.ok) {
+            const geminiData = await geminiRes.json();
+            const text =
+              geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            return sendJson(res, 200, {
+              choices: [{ message: { content: text } }],
+            });
+          }
+        }
+
+        return sendJson(res, 503, {
+          error: 'Neither GROQ_API_KEY nor GEMINI_API_KEY succeeded on server',
         });
-        const data = await upstream.json();
-        return sendJson(res, upstream.status, data);
       } catch (err) {
         return sendJson(res, 500, { error: String(err.message || err) });
       }
@@ -425,7 +580,9 @@ function createServer() {
 if (require.main === module) {
   const server = createServer();
   server.listen(PORT, () => {
-    console.log(`FareSnap ONDC BAP Gateway & AI Proxy listening on http://localhost:${PORT}`);
+    console.log(
+      `FareSnap ONDC BAP Gateway, Surge Pool & AI Proxy listening on http://localhost:${PORT}`
+    );
   });
 }
 

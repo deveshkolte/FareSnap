@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: faresnap-ondc-bap-gateway
+    runtime: node
+    plan: free
+    buildCommand: echo "Zero-dependency Node server ready"
+    startCommand: node ondc-test/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 4040
+      - key: ONDC_BAP_ID
+        value: faresnap.bap.ondc.org
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

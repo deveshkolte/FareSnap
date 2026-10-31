@@ -3,6 +3,9 @@ const SUPABASE_URL =
 const SUPABASE_ANON_KEY =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrZnVzZ2Rka2l1dGFzYndpZ2lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMjI2NDEsImV4cCI6MjA5ODc5ODY0MX0.Y27HCTSZI9mVmSbwsGjCRxojVCFys3NQ9kq3UAWQZj4';
+const LOCAL_BAP_URL = (
+  process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040'
+).replace(/\/$/, '');
 
 export type FareReport = {
   app: string;
@@ -42,6 +45,13 @@ export async function reportFare(data: FareReport): Promise<void> {
     return;
   }
   recentSubmissions.set(dedupeKey, Date.now());
+
+  // Submit to local/hosted FareSnap BAP Surge Pool and Supabase concurrently
+  fetch(`${LOCAL_BAP_URL}/fare-reports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).catch(() => {});
 
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/fare_reports`, {
@@ -85,9 +95,23 @@ export async function fetchRecentCrowdsourcedFares(
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) return {};
-    const rows = await res.json();
-    if (!Array.isArray(rows) || rows.length === 0) return {};
+    let rows: any[] = [];
+    if (res.ok) {
+      const parsed = await res.json();
+      if (Array.isArray(parsed)) rows = parsed;
+    }
+    if (rows.length === 0) {
+      const localRes = await fetch(
+        `${LOCAL_BAP_URL}/fare-reports?city=${encodeURIComponent(
+          city
+        )}&minKm=${minKm.toFixed(1)}&maxKm=${maxKm.toFixed(1)}`
+      );
+      if (localRes.ok) {
+        const localParsed = await localRes.json();
+        if (Array.isArray(localParsed)) rows = localParsed;
+      }
+    }
+    if (rows.length === 0) return {};
 
     // Normalize reported fares to the current route's distance
     const byApp: Record<string, number[]> = {};
@@ -136,9 +160,21 @@ export async function fetchLiveAreaSurgeMultipliers(
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) return {};
-    const rows = await res.json();
-    if (!Array.isArray(rows) || rows.length === 0) return {};
+    let rows: any[] = [];
+    if (res.ok) {
+      const parsed = await res.json();
+      if (Array.isArray(parsed)) rows = parsed;
+    }
+    if (rows.length === 0) {
+      const localRes = await fetch(
+        `${LOCAL_BAP_URL}/fare-reports?city=${encodeURIComponent(city)}`
+      );
+      if (localRes.ok) {
+        const localParsed = await localRes.json();
+        if (Array.isArray(localParsed)) rows = localParsed;
+      }
+    }
+    if (rows.length === 0) return {};
 
     const cleanArea = (pickupArea || '').toLowerCase().trim();
     const ratiosByApp: Record<string, number[]> = {};
