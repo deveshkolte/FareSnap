@@ -25,9 +25,14 @@ import {
   getHourlyFareForecast,
 } from '../utils/fareEngine';
 import {
+  fetchLiveAreaSurgeMultipliers,
   fetchRecentCrowdsourcedFares,
   reportFare,
 } from '../utils/fareReporter';
+import {
+  computeMetroSplitCombo,
+  MetroSplitCombo,
+} from '../utils/metroComboEngine';
 import { FareQuote, QuoteEngine } from '../utils/quoteEngine';
 import {
   getLifetimeSavings,
@@ -618,10 +623,14 @@ export default function ResultsScreen() {
     Partial<Record<LinkableProviderId, boolean>>
   >({});
 
-  // Crowdsourced rider calibration map & ONDC Beckn live quotes
+  // Crowdsourced rider calibration map, Waze-style area surge, Metro combo & ONDC live quotes
   const [crowdsourcedFares, setCrowdsourcedFares] = useState<
     Record<string, number>
   >({});
+  const [areaSurgeMultipliers, setAreaSurgeMultipliers] = useState<
+    Record<string, number>
+  >({});
+  const [metroCombo, setMetroCombo] = useState<MetroSplitCombo | null>(null);
   const [ondcLiveQuotes, setOndcLiveQuotes] = useState<FareQuote[]>([]);
 
   // BuyHatke Booking Flow Sheets
@@ -745,6 +754,25 @@ export default function ResultsScreen() {
           fetchRecentCrowdsourcedFares(detected, result.distanceKm)
             .then((cf) => setCrowdsourcedFares(cf))
             .catch(() => {});
+
+          fetchLiveAreaSurgeMultipliers(
+            detected,
+            pickup.address.split(',')[0].trim()
+          )
+            .then((asm) => setAreaSurgeMultipliers(asm))
+            .catch(() => {});
+
+          computeMetroSplitCombo({
+            city: detected,
+            cityLabel: CITY_LABELS[detected],
+            originCoords: result.originCoords,
+            destCoords: result.destCoords,
+            distanceKm: result.distanceKm,
+            durationMin: result.durationMin,
+            referenceCabFare: approxCabFare,
+          })
+            .then((mc) => setMetroCombo(mc))
+            .catch(() => {});
         } else {
           setRouteError(true);
         }
@@ -838,6 +866,14 @@ export default function ResultsScreen() {
           : item.baseEta;
       let sourceKind: QuoteSourceKind = 'estimated';
 
+      // Apply Waze-style neighborhood surge multiplier if reported by recent riders
+      const areaMult = areaSurgeMultipliers[item.providerName];
+      if (areaMult && areaMult !== 1.0 && !crowdsourcedFares[item.providerName]) {
+        price = Math.round(price * areaMult);
+        highPrice = Math.max(price + 12, Math.round(price * 1.15));
+        sourceKind = 'community_verified';
+      }
+
       // Check if community rider report exists in Supabase for this provider
       const crowdFare = crowdsourcedFares[item.providerName];
       if (crowdFare && item.priceMultiplier === 1.0) {
@@ -910,6 +946,7 @@ export default function ResultsScreen() {
   }, [
     activeDistanceKm,
     activeDurationMin,
+    areaSurgeMultipliers,
     city,
     crowdsourcedFares,
     liveWeather,
@@ -978,9 +1015,10 @@ export default function ResultsScreen() {
       'Uber',
       city,
       activeDistanceKm,
-      activeDurationMin
+      activeDurationMin,
+      liveWeather?.upcomingSlotMultipliers
     );
-  }, [city, activeDistanceKm, activeDurationMin]);
+  }, [city, activeDistanceKm, activeDurationMin, liveWeather]);
 
   // AI price insight
   useEffect(() => {
@@ -1313,6 +1351,19 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             ...prev,
             [providerId]: false,
           }));
+
+          // Automatically contribute intercepted live fare to Waze-style community pool
+          if (products.length > 0 && activeDistanceKm > 0) {
+            const primary = products[0];
+            reportFare({
+              app: primary.providerName,
+              city,
+              pickup_area: pickup.address.split(',')[0].trim(),
+              distance_km: activeDistanceKm,
+              quoted_fare: primary.price,
+              app_version: '1.0.0',
+            }).catch(() => {});
+          }
         }}
         onAuthStatusDetected={(providerId, isLoggedIn) => {
           if (!isLoggedIn) {
@@ -1654,11 +1705,15 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                         <Text style={styles.aiCardTitle}>
                           🤖 AI Price Sense & 60m Forecast
                         </Text>
-                        {!aiLoading && aiInsight && (
+                        {liveWeather?.rainRadarAdvice ? (
+                          <Text style={styles.rainRadarBannerText}>
+                            {liveWeather.rainRadarAdvice}
+                          </Text>
+                        ) : !aiLoading && aiInsight ? (
                           <Text style={styles.aiConfidence}>
                             {aiInsight.advice}
                           </Text>
-                        )}
+                        ) : null}
                       </View>
                       <Text style={styles.aiChevron}>
                         {aiCollapsed ? '›' : '‹'}
@@ -1691,6 +1746,28 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                       </View>
                     )}
                   </TouchableOpacity>
+                )}
+
+                {idx === 2 && metroCombo && (
+                  <View style={styles.metroComboCard}>
+                    <View style={styles.metroComboHeader}>
+                      <Text style={styles.metroComboBadge}>
+                        🚇 BEAT TRAFFIC · {metroCombo.metroNetworkName.toUpperCase()}
+                      </Text>
+                      <Text style={styles.metroComboSavingsPill}>
+                        Save ₹{metroCombo.savingsVsCab}
+                      </Text>
+                    </View>
+                    <Text style={styles.metroComboTitle}>
+                      Auto + Metro Split Route · ₹{metroCombo.totalComboFare} (~
+                      {metroCombo.totalComboMinutes} mins)
+                    </Text>
+                    <Text style={styles.metroComboLegs}>
+                      🛺 ₹{metroCombo.firstMileFare} to {metroCombo.originStationName}{' '}
+                      → 🚇 ₹{metroCombo.metroFare} ({metroCombo.metroMinutes}m) to{' '}
+                      {metroCombo.destStationName} → 🛺 ₹{metroCombo.lastMileFare}
+                    </Text>
+                  </View>
                 )}
               </View>
             );
@@ -2493,6 +2570,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#4338ca',
     marginTop: 2,
+  },
+  rainRadarBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#b45309',
+    marginTop: 3,
+  },
+  metroComboCard: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  metroComboHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  metroComboBadge: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803d',
+    letterSpacing: 0.4,
+  },
+  metroComboSavingsPill: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#166534',
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  metroComboTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 3,
+  },
+  metroComboLegs: {
+    fontSize: 12,
+    color: '#166534',
+    lineHeight: 17,
   },
   aiChevron: {
     fontSize: 20,
