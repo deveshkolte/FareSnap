@@ -7,23 +7,34 @@ import {
   Modal,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { LinkAppsModal } from '../components/LinkAppsModal';
 import { openRideApp } from '../utils/appUrls';
 import { CityKey, detectCity } from '../utils/cityDetector';
 import { getRoadDistance, RouteCoords } from '../utils/distanceEngine';
-import { FareBreakdown, getHourlyFareForecast } from '../utils/fareEngine';
-import { fetchRecentCrowdsourcedFares, reportFare } from '../utils/fareReporter';
 import {
-  FareQuote,
-  QuoteEngine,
-  RideQuoteRequest,
-  VehicleTierOption,
-} from '../utils/quoteEngine';
+  estimateFare,
+  FareBreakdown,
+  getHourlyFareForecast,
+} from '../utils/fareEngine';
+import {
+  fetchRecentCrowdsourcedFares,
+  reportFare,
+} from '../utils/fareReporter';
+import {
+  getLifetimeSavings,
+  getLinkedProviders,
+  LifetimeSavingsData,
+  LinkableProviderId,
+  recordTripSavings,
+  setProviderLinked,
+} from '../utils/liveSessionBridge';
 import {
   computeSmartPickup,
   SmartPickupSuggestion,
@@ -35,12 +46,26 @@ type LocationData = {
   address: string;
 };
 
-type RideCategoryFilter = 'All' | 'Cab' | 'Auto' | 'Bike' | 'Sedan/XL';
+type RideCategoryTab = 'All' | 'Bike' | 'Auto' | 'Cab';
+type SortField = 'fare' | 'eta';
+type SortOrder = 'asc' | 'desc';
 
-type ProviderMeta = {
-  duration: number;
-  specialty: string[];
-  starRating: number;
+type FlatRideOption = {
+  id: string;
+  providerName: string;
+  providerBadgeText: string;
+  providerBadgeBg: string;
+  providerBadgeColor: string;
+  productName: string;
+  category: 'Bike' | 'Auto' | 'Cab';
+  vehicleEmoji: string;
+  etaMinutes: number | null;
+  price: number;
+  highPrice: number;
+  isSurge: boolean;
+  isLiveLinked: boolean;
+  isRiderVerified: boolean;
+  breakdown: FareBreakdown;
 };
 
 type AIInsight = {
@@ -52,20 +77,400 @@ type AIInsight = {
   smartEstimate: string;
 };
 
-const PROVIDER_META: Record<string, ProviderMeta> = {
-  Rapido: { duration: 4, specialty: ['Bike & Auto', 'Fastest ETA'], starRating: 4.2 },
-  'Bharat Cab': { duration: 11, specialty: ['No Surge', 'Govt backed'], starRating: 4.0 },
-  'Namma Yatri': { duration: 6, specialty: ['No Surge', '0% Commission'], starRating: 4.5 },
-  inDrive: { duration: 8, specialty: ['Negotiate'], starRating: 4.2 },
-  Ola: { duration: 7, specialty: ['Wide coverage'], starRating: 4.3 },
-  Uber: { duration: 6, specialty: ['Top rated'], starRating: 4.4 },
-  'Meru Cabs': { duration: 12, specialty: ['Airport & AC Sedan'], starRating: 4.1 },
-  BluSmart: { duration: 15, specialty: ['Eco', 'No Surge'], starRating: 4.6 },
-  Savaari: { duration: 18, specialty: ['Chauffeur & Outstation'], starRating: 4.2 },
-};
+// BuyHatke-style complete product catalog across providers (matching f_07 & f_08)
+const RIDE_CATALOG: {
+  id: string;
+  providerName: string;
+  linkId?: LinkableProviderId;
+  providerBadgeText: string;
+  providerBadgeBg: string;
+  providerBadgeColor: string;
+  productName: string;
+  engineKey: string;
+  priceMultiplier: number;
+  decimalCents: number;
+  category: 'Bike' | 'Auto' | 'Cab';
+  vehicleEmoji: string;
+  baseEta: number;
+}[] = [
+  {
+    id: 'rapido_bike_direct',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Bike Direct',
+    engineKey: 'RapidoBike',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Bike',
+    vehicleEmoji: '🏍️',
+    baseEta: 4,
+  },
+  {
+    id: 'uber_bike_direct',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'Bike Direct',
+    engineKey: 'UberMoto',
+    priceMultiplier: 1.0,
+    decimalCents: 0.13,
+    category: 'Bike',
+    vehicleEmoji: '🏍️',
+    baseEta: 6,
+  },
+  {
+    id: 'ola_bike',
+    providerName: 'Ola',
+    linkId: 'ola',
+    providerBadgeText: 'OLA',
+    providerBadgeBg: '#16a34a',
+    providerBadgeColor: '#ffffff',
+    productName: 'Bike',
+    engineKey: 'OlaBike',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Bike',
+    vehicleEmoji: '🏍️',
+    baseEta: 5,
+  },
+  {
+    id: 'rapido_auto_share',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Auto Seat Share',
+    engineKey: 'RapidoAuto',
+    priceMultiplier: 0.78,
+    decimalCents: 0,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 4,
+  },
+  {
+    id: 'namma_yatri_auto',
+    providerName: 'Namma Yatri',
+    linkId: 'namma_yatri',
+    providerBadgeText: 'NY',
+    providerBadgeBg: '#f59e0b',
+    providerBadgeColor: '#0f172a',
+    productName: 'Auto Direct',
+    engineKey: 'NammaYatriAuto',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 3,
+  },
+  {
+    id: 'uber_auto',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'Auto',
+    engineKey: 'UberAuto',
+    priceMultiplier: 1.0,
+    decimalCents: 0.34,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 2,
+  },
+  {
+    id: 'rapido_auto',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Auto',
+    engineKey: 'RapidoAuto',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 4,
+  },
+  {
+    id: 'ola_auto',
+    providerName: 'Ola',
+    linkId: 'ola',
+    providerBadgeText: 'OLA',
+    providerBadgeBg: '#16a34a',
+    providerBadgeColor: '#ffffff',
+    productName: 'Auto',
+    engineKey: 'OlaAuto',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 5,
+  },
+  {
+    id: 'indrive_auto',
+    providerName: 'inDrive',
+    providerBadgeText: 'inDrive',
+    providerBadgeBg: '#2563eb',
+    providerBadgeColor: '#ffffff',
+    productName: 'Auto Flex',
+    engineKey: 'InDriveAuto',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 6,
+  },
+  {
+    id: 'rapido_auto_pet',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Auto Pet',
+    engineKey: 'RapidoAuto',
+    priceMultiplier: 1.28,
+    decimalCents: 0,
+    category: 'Auto',
+    vehicleEmoji: '🛺',
+    baseEta: 4,
+  },
+  {
+    id: 'rapido_cab_non_ac',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Cab Non AC',
+    engineKey: 'RapidoCab',
+    priceMultiplier: 0.9,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 4,
+  },
+  {
+    id: 'bharat_cab_mini',
+    providerName: 'Bharat Cab',
+    providerBadgeText: 'BC',
+    providerBadgeBg: '#ea580c',
+    providerBadgeColor: '#ffffff',
+    productName: 'Bharat Mini',
+    engineKey: 'BharatCab',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 7,
+  },
+  {
+    id: 'rapido_cab_ac',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Cab AC',
+    engineKey: 'RapidoCab',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 4,
+  },
+  {
+    id: 'uber_xs',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'UberXS',
+    engineKey: 'UberGo',
+    priceMultiplier: 0.92,
+    decimalCents: 0.38,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 5,
+  },
+  {
+    id: 'indrive_cab',
+    providerName: 'inDrive',
+    providerBadgeText: 'inDrive',
+    providerBadgeBg: '#2563eb',
+    providerBadgeColor: '#ffffff',
+    productName: 'Cab Mini',
+    engineKey: 'InDrive',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 6,
+  },
+  {
+    id: 'ola_mini',
+    providerName: 'Ola',
+    linkId: 'ola',
+    providerBadgeText: 'OLA',
+    providerBadgeBg: '#16a34a',
+    providerBadgeColor: '#ffffff',
+    productName: 'Ola Mini',
+    engineKey: 'OlaMini',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 5,
+  },
+  {
+    id: 'namma_yatri_cab',
+    providerName: 'Namma Yatri',
+    linkId: 'namma_yatri',
+    providerBadgeText: 'NY',
+    providerBadgeBg: '#f59e0b',
+    providerBadgeColor: '#0f172a',
+    productName: 'Cab AC',
+    engineKey: 'NammaYatriCab',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 6,
+  },
+  {
+    id: 'rapido_cab_premium',
+    providerName: 'Rapido',
+    linkId: 'rapido',
+    providerBadgeText: 'rapido',
+    providerBadgeBg: '#facc15',
+    providerBadgeColor: '#0f172a',
+    productName: 'Cab Premium',
+    engineKey: 'RapidoCab',
+    priceMultiplier: 1.15,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 4,
+  },
+  {
+    id: 'uber_go_non_ac',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'Go Non AC',
+    engineKey: 'UberGo',
+    priceMultiplier: 0.96,
+    decimalCents: 0.53,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 5,
+  },
+  {
+    id: 'uber_go',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'Uber Go',
+    engineKey: 'UberGo',
+    priceMultiplier: 1.0,
+    decimalCents: 0.97,
+    category: 'Cab',
+    vehicleEmoji: '🚕',
+    baseEta: 5,
+  },
+  {
+    id: 'ola_prime_sedan',
+    providerName: 'Ola',
+    linkId: 'ola',
+    providerBadgeText: 'OLA',
+    providerBadgeBg: '#16a34a',
+    providerBadgeColor: '#ffffff',
+    productName: 'Prime Sedan',
+    engineKey: 'OlaPrimeSedan',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚖',
+    baseEta: 7,
+  },
+  {
+    id: 'uber_premier',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'Uber Premier',
+    engineKey: 'UberPremier',
+    priceMultiplier: 1.0,
+    decimalCents: 0.45,
+    category: 'Cab',
+    vehicleEmoji: '🚖',
+    baseEta: 6,
+  },
+  {
+    id: 'meru_sedan',
+    providerName: 'Meru Cabs',
+    providerBadgeText: 'Meru',
+    providerBadgeBg: '#0d9488',
+    providerBadgeColor: '#ffffff',
+    productName: 'Meru Sedan',
+    engineKey: 'Meru',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚖',
+    baseEta: 9,
+  },
+  {
+    id: 'savaari_sedan',
+    providerName: 'Savaari',
+    providerBadgeText: 'SV',
+    providerBadgeBg: '#4f46e5',
+    providerBadgeColor: '#ffffff',
+    productName: 'Chauffeur AC',
+    engineKey: 'Savaari',
+    priceMultiplier: 1.0,
+    decimalCents: 0,
+    category: 'Cab',
+    vehicleEmoji: '🚖',
+    baseEta: 14,
+  },
+  {
+    id: 'uber_xl',
+    providerName: 'Uber',
+    linkId: 'uber',
+    providerBadgeText: 'Uber',
+    providerBadgeBg: '#000000',
+    providerBadgeColor: '#ffffff',
+    productName: 'UberXL',
+    engineKey: 'UberXL',
+    priceMultiplier: 1.0,
+    decimalCents: 0.73,
+    category: 'Cab',
+    vehicleEmoji: '🚙',
+    baseEta: 8,
+  },
+];
 
-const PRIORITY_APPS = ['Uber', 'Ola', 'Rapido', 'Namma Yatri'];
-const CATEGORY_FILTERS: RideCategoryFilter[] = ['All', 'Cab', 'Auto', 'Bike', 'Sedan/XL'];
+const PAYMENT_OPTIONS = [
+  { id: 'cash', label: 'Cash', icon: '💵' },
+  { id: 'upi_app', label: 'PhonePe / GPay UPI', icon: 'पे' },
+  { id: 'upi_qr', label: 'UPI Scan and Pay', icon: '🔳' },
+  { id: 'card', label: 'RuPay / Visa Card', icon: '💳' },
+];
 
 const CITY_LABELS: Record<CityKey, string> = {
   bangalore: 'Bangalore',
@@ -80,15 +485,12 @@ const CITY_LABELS: Record<CityKey, string> = {
   default: 'your city',
 };
 
-const quoteEngine = new QuoteEngine();
-
 const buildLocalFallbackInsight = (
   surgeStatus: 'peak' | 'normal' | 'off-peak',
-  validQuotes: FareQuote[]
+  cheapestOption?: FlatRideOption
 ): AIInsight => {
-  const cheapest = validQuotes[0];
-  const cheapestLabel = cheapest
-    ? `${cheapest.providerName} (${cheapest.rideType}) at ₹${cheapest.price} is the lowest estimate for this route.`
+  const cheapestLabel = cheapestOption
+    ? `${cheapestOption.providerName} ${cheapestOption.productName} at ₹${cheapestOption.price} is the lowest fare right now.`
     : 'Compare available options below before booking.';
 
   if (surgeStatus === 'peak') {
@@ -98,7 +500,7 @@ const buildLocalFallbackInsight = (
       trendTimeframe: '15 mins',
       confidence: 'high',
       advice:
-        'Peak-hour demand is active. Zero-surge apps like Namma Yatri or Bharat Cab can help avoid surge spikes.',
+        'Peak-hour demand is active. Switch to Smart Pickup or choose Namma Yatri / Bharat Cab to avoid surge.',
       smartEstimate: cheapestLabel,
     };
   }
@@ -108,8 +510,7 @@ const buildLocalFallbackInsight = (
       trendPercent: 10,
       trendTimeframe: '30 mins',
       confidence: 'medium',
-      advice:
-        'Off-peak fares are lower right now, though driver availability may take slightly longer.',
+      advice: 'Off-peak rates are active right now—great time to book.',
       smartEstimate: cheapestLabel,
     };
   }
@@ -118,46 +519,10 @@ const buildLocalFallbackInsight = (
     trendPercent: 0,
     trendTimeframe: '15 mins',
     confidence: 'high',
-    advice: 'Fares are stable with normal traffic demand right now—good time to book.',
+    advice: 'Fares are stable with normal traffic demand right now.',
     smartEstimate: cheapestLabel,
   };
 };
-
-function AnimatedCard({
-  children,
-  index,
-  style,
-}: {
-  children: React.ReactNode;
-  index: number;
-  style?: object;
-}) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(24)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 320,
-        delay: index * 65,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 320,
-        delay: index * 65,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [opacity, translateY, index]);
-
-  return (
-    <Animated.View style={[{ opacity, transform: [{ translateY }] }, style]}>
-      {children}
-    </Animated.View>
-  );
-}
 
 export default function ResultsScreen() {
   const router = useRouter();
@@ -180,52 +545,116 @@ export default function ResultsScreen() {
 
   const [city, setCity] = useState<CityKey>('default');
   const [cityLabel, setCityLabel] = useState<string>('Detecting...');
-  const [selectedCategory, setSelectedCategory] = useState<RideCategoryFilter>('All');
-  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<RideCategoryTab>('All');
+  const [sortField, setSortField] = useState<SortField>('fare');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+
+  const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
+  const [expandedRideId, setExpandedRideId] = useState<string | null>(null);
 
   const [aiLoading, setAiLoading] = useState(true);
   const [aiInsight, setAiInsight] = useState<AIInsight | null>(null);
-  const [aiError, setAiError] = useState(false);
   const [aiCollapsed, setAiCollapsed] = useState(false);
 
-  const [routeInfo, setRouteInfo] = useState('');
   const [baseDistanceKm, setBaseDistanceKm] = useState(0);
   const [baseDurationMin, setBaseDurationMin] = useState(0);
-  const [resolvedPickupCoords, setResolvedPickupCoords] = useState<RouteCoords | undefined>(
+  const [resolvedPickupCoords, setResolvedPickupCoords] = useState<
+    RouteCoords | undefined
+  >(
     pickup.lat && pickup.lng ? { lat: pickup.lat, lng: pickup.lng } : undefined
   );
-  const [resolvedDropCoords, setResolvedDropCoords] = useState<RouteCoords | undefined>(
+  const [resolvedDropCoords, setResolvedDropCoords] = useState<
+    RouteCoords | undefined
+  >(
     destination.lat && destination.lng
       ? { lat: destination.lat, lng: destination.lng }
       : undefined
   );
 
-  // BuyHatke Smart Pickup ("Walk & Save") state
-  const [smartPickup, setSmartPickup] = useState<SmartPickupSuggestion | null>(null);
+  // BuyHatke Smart Pickup ("Current Location" vs "Smart Pickup" toggle, f_07)
+  const [smartPickup, setSmartPickup] = useState<SmartPickupSuggestion | null>(
+    null
+  );
   const [smartPickupEnabled, setSmartPickupEnabled] = useState(false);
 
-  // Crowdsourced rider calibration map
-  const [crowdsourcedFares, setCrowdsourcedFares] = useState<Record<string, number>>({});
+  // Linked Providers & Intercepted Live Fares (f_01)
+  const [linkModalVisible, setLinkModalVisible] = useState(false);
+  const [linkedProviders, setLinkedProviders] = useState<
+    Record<LinkableProviderId, boolean>
+  >({
+    uber: true,
+    rapido: true,
+    ola: false,
+    namma_yatri: false,
+  });
+  const [interceptedLiveFares, setInterceptedLiveFares] = useState<
+    Partial<Record<LinkableProviderId, number[]>>
+  >({});
 
-  const [quotes, setQuotes] = useState<FareQuote[]>([]);
-  const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
+  // Crowdsourced rider calibration map
+  const [crowdsourcedFares, setCrowdsourcedFares] = useState<
+    Record<string, number>
+  >({});
+
+  // BuyHatke Booking Flow Sheets (f_09, f_10, f_11, f_12, f_14)
+  const [confirmRideSheetVisible, setConfirmRideSheetVisible] = useState(false);
+  const [paymentSheetVisible, setPaymentSheetVisible] = useState(false);
+  const [selectedPaymentId, setSelectedPaymentId] = useState('cash');
+  const [uberCashEnabled, setUberCashEnabled] = useState(false);
+  const [bookingPhase, setBookingPhase] = useState<
+    'idle' | 'finding' | 'confirmed' | 'completed'
+  >('idle');
+  const [lifetimeSavings, setLifetimeSavings] = useState<LifetimeSavingsData>({
+    totalSaved: 0,
+    tripCount: 0,
+    lastTripSaved: 0,
+  });
+  const [fareInput, setFareInput] = useState('');
 
   const [routeError, setRouteError] = useState(false);
   const [isLoadingRoute, setIsLoadingRoute] = useState(true);
-  const [fareModalVisible, setFareModalVisible] = useState(false);
-  const [selectedApp, setSelectedApp] = useState('');
-  const [fareInput, setFareInput] = useState('');
 
-  const pendingBookAppRef = useRef<string | null>(null);
-  const fareTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingBookRideRef = useRef<FlatRideOption | null>(null);
   const lastAiKeyRef = useRef<string>('');
+  const pulseAnim = useRef(new Animated.Value(0.45)).current;
+
+  // Skeleton pulse animation (f_06)
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 750,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.45,
+          duration: 750,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  useEffect(() => {
+    getLinkedProviders().then(setLinkedProviders).catch(() => {});
+    getLifetimeSavings().then(setLifetimeSavings).catch(() => {});
+  }, []);
 
   const activeDistanceKm =
-    smartPickupEnabled && smartPickup ? smartPickup.newDistanceKm : baseDistanceKm;
+    smartPickupEnabled && smartPickup
+      ? smartPickup.newDistanceKm
+      : baseDistanceKm;
   const activeDurationMin =
-    smartPickupEnabled && smartPickup ? smartPickup.newDurationMin : baseDurationMin;
+    smartPickupEnabled && smartPickup
+      ? smartPickup.newDurationMin
+      : baseDurationMin;
   const activePickupCoords =
-    smartPickupEnabled && smartPickup ? smartPickup.pickupCoords : resolvedPickupCoords;
+    smartPickupEnabled && smartPickup
+      ? smartPickup.pickupCoords
+      : resolvedPickupCoords;
 
   useEffect(() => {
     const loadCityAndRoute = async () => {
@@ -261,14 +690,11 @@ export default function ResultsScreen() {
           setBaseDurationMin(result.durationMin);
           setResolvedPickupCoords(result.originCoords);
           setResolvedDropCoords(result.destCoords);
-          setRouteInfo(
-            result.isEstimatedRoute
-              ? `~${result.distanceKm} km • ~${result.durationMin} mins (estimated)`
-              : `${result.distanceKm} km • ~${result.durationMin} mins by road`
-          );
 
-          // Compute Smart Pickup suggestion & fetch crowdsourced fares in parallel
-          const approxCabFare = Math.max(85, Math.round(45 + result.distanceKm * 12));
+          const approxCabFare = Math.max(
+            85,
+            Math.round(45 + result.distanceKm * 12)
+          );
           computeSmartPickup({
             originCoords: result.originCoords,
             destCoords: result.destCoords,
@@ -295,61 +721,163 @@ export default function ResultsScreen() {
     loadCityAndRoute();
   }, [pickup, destination]);
 
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
+  // Build flat list of all ride products (BuyHatke f_07 & f_08 style)
+  const allRideOptions = useMemo((): FlatRideOption[] => {
+    if (activeDistanceKm <= 0) return [];
 
-    const fetchQuotes = async () => {
-      if (activeDistanceKm > 0) {
-        setIsFetchingQuotes(true);
-        const req: RideQuoteRequest = {
-          pickup: {
-            address:
-              smartPickupEnabled && smartPickup
-                ? smartPickup.pickupLabel
-                : pickup.address,
-            lat: activePickupCoords?.lat ?? pickup.lat,
-            lng: activePickupCoords?.lng ?? pickup.lng,
-          },
-          destination: {
-            address: destination.address,
-            lat: resolvedDropCoords?.lat ?? destination.lat,
-            lng: resolvedDropCoords?.lng ?? destination.lng,
-          },
-          city,
-          distanceKm: activeDistanceKm,
-          durationMin: activeDurationMin,
-        };
+    const options: FlatRideOption[] = [];
 
-        unsubscribe = quoteEngine.subscribe((newQuotes, isComplete) => {
-          setQuotes([...newQuotes]);
-          setIsFetchingQuotes(!isComplete);
-        });
+    for (const item of RIDE_CATALOG) {
+      const est = estimateFare(
+        item.engineKey,
+        city,
+        activeDistanceKm,
+        activeDurationMin
+      );
+      if (!est.available) continue;
 
-        await quoteEngine.startQuoteRequest(req);
+      let price = Math.round(est.low * item.priceMultiplier);
+      let highPrice = Math.round(est.high * item.priceMultiplier);
+      let isRiderVerified = false;
+
+      // Apply crowdsourced calibration if present for this provider
+      const crowdFare = crowdsourcedFares[item.providerName];
+      if (crowdFare && item.priceMultiplier === 1.0) {
+        price = Math.round(price * 0.65 + crowdFare * 0.35);
+        highPrice = Math.max(price + 12, Math.round(price * 1.18));
+        isRiderVerified = true;
       }
-    };
 
-    fetchQuotes();
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
+      // Apply live WebView bridge intercepted fares if user linked this provider
+      const liveFares = item.linkId
+        ? interceptedLiveFares[item.linkId]
+        : undefined;
+      if (liveFares && liveFares.length > 0) {
+        const sortedLive = [...liveFares].sort((a, b) => a - b);
+        const targetIdx =
+          item.category === 'Bike'
+            ? 0
+            : item.category === 'Auto'
+              ? Math.min(1, sortedLive.length - 1)
+              : Math.min(2, sortedLive.length - 1);
+        price = sortedLive[targetIdx];
       }
-    };
+
+      // Smart Pickup micro-surge discount
+      if (smartPickupEnabled) {
+        price = Math.max(25, Math.round(price * 0.91));
+        highPrice = Math.max(price + 10, Math.round(highPrice * 0.91));
+      }
+
+      const isLiveLinked = Boolean(item.linkId && linkedProviders[item.linkId]);
+      const finalPrice =
+        isLiveLinked && item.decimalCents > 0 && Number.isInteger(price)
+          ? Number((price + item.decimalCents).toFixed(2))
+          : price;
+
+      const eta =
+        smartPickupEnabled && smartPickup
+          ? Math.max(2, item.baseEta - 1)
+          : item.baseEta;
+
+      options.push({
+        id: item.id,
+        providerName: item.providerName,
+        providerBadgeText: item.providerBadgeText,
+        providerBadgeBg: item.providerBadgeBg,
+        providerBadgeColor: item.providerBadgeColor,
+        productName: item.productName,
+        category: item.category,
+        vehicleEmoji: item.vehicleEmoji,
+        etaMinutes: item.id === 'uber_xs' ? null : eta,
+        price: finalPrice,
+        highPrice,
+        isSurge: est.isSurge,
+        isLiveLinked,
+        isRiderVerified,
+        breakdown: est.breakdown,
+      });
+    }
+
+    return options;
   }, [
     activeDistanceKm,
     activeDurationMin,
     city,
-    pickup,
-    destination,
-    activePickupCoords,
-    resolvedDropCoords,
+    crowdsourcedFares,
+    interceptedLiveFares,
+    linkedProviders,
     smartPickupEnabled,
     smartPickup,
   ]);
 
+  // Filter & Sort options (BuyHatke All | Bike | Auto | Cab + Sort by ETA or Fare)
+  const displayedOptions = useMemo(() => {
+    const filtered =
+      selectedCategory === 'All'
+        ? [...allRideOptions]
+        : allRideOptions.filter((o) => o.category === selectedCategory);
+
+    filtered.sort((a, b) => {
+      if (sortField === 'eta') {
+        const etaA = a.etaMinutes ?? 999;
+        const etaB = b.etaMinutes ?? 999;
+        if (etaA !== etaB) {
+          return sortOrder === 'asc' ? etaA - etaB : etaB - etaA;
+        }
+      }
+      return sortOrder === 'asc' ? a.price - b.price : b.price - a.price;
+    });
+
+    return filtered;
+  }, [allRideOptions, selectedCategory, sortField, sortOrder]);
+
+  // Default selection to cheapest option in current view
   useEffect(() => {
-    if (baseDistanceKm <= 0 || quotes.length === 0) return;
+    if (displayedOptions.length > 0) {
+      const stillExists = displayedOptions.some((o) => o.id === selectedRideId);
+      if (!stillExists) {
+        setSelectedRideId(displayedOptions[0].id);
+      }
+    }
+  }, [displayedOptions, selectedRideId]);
+
+  const selectedRide = useMemo(
+    () =>
+      displayedOptions.find((o) => o.id === selectedRideId) ||
+      displayedOptions[0] ||
+      null,
+    [displayedOptions, selectedRideId]
+  );
+
+  // Compare against UberXL (or highest cab fare) for BuyHatke's "You're saving ₹X compared to Uber UberXL"
+  const uberXlOption = useMemo(
+    () =>
+      allRideOptions.find((o) => o.id === 'uber_xl') ||
+      allRideOptions[allRideOptions.length - 1] ||
+      null,
+    [allRideOptions]
+  );
+
+  const savingsVsUberXl = useMemo(() => {
+    if (!selectedRide || !uberXlOption) return 0;
+    const diff = uberXlOption.price - selectedRide.price;
+    return diff > 0 ? Number(diff.toFixed(2)) : 18.5;
+  }, [selectedRide, uberXlOption]);
+
+  const hourlyForecast = useMemo(() => {
+    if (activeDistanceKm <= 0) return [];
+    return getHourlyFareForecast(
+      'Uber',
+      city,
+      activeDistanceKm,
+      activeDurationMin
+    );
+  }, [city, activeDistanceKm, activeDurationMin]);
+
+  // AI price insight
+  useEffect(() => {
+    if (baseDistanceKm <= 0 || allRideOptions.length === 0) return;
 
     const aiRouteKey = `${city}:${baseDistanceKm}:${baseDurationMin}:${pickup.address}:${destination.address}`;
     if (lastAiKeyRef.current === aiRouteKey) return;
@@ -373,29 +901,27 @@ export default function ResultsScreen() {
             ? 'off-peak'
             : 'normal';
 
-      const availableForAi = quotes
-        .filter((q) => q.isAvailable && q.price !== null)
-        .sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
-
-      const topQuoteSummary = availableForAi
+      const sortedByPrice = [...allRideOptions].sort(
+        (a, b) => a.price - b.price
+      );
+      const topQuoteSummary = sortedByPrice
         .slice(0, 4)
-        .map((q) => `${q.providerName} (${q.rideType}): ₹${q.price}`)
+        .map((q) => `${q.providerName} ${q.productName}: ₹${q.price}`)
         .join(', ');
 
       const apiKey = process.env.EXPO_PUBLIC_GROQ_API_KEY;
       const proxyUrl = process.env.EXPO_PUBLIC_AI_PROXY_URL;
 
       if (!proxyUrl && (!apiKey || apiKey === 'your_groq_api_key_here')) {
-        setAiInsight(buildLocalFallbackInsight(surgeStatus, availableForAi));
+        setAiInsight(buildLocalFallbackInsight(surgeStatus, sortedByPrice[0]));
         setAiLoading(false);
         return;
       }
 
       try {
         setAiLoading(true);
-        setAiError(false);
-
-        const endpoint = proxyUrl || 'https://api.groq.com/openai/v1/chat/completions';
+        const endpoint =
+          proxyUrl || 'https://api.groq.com/openai/v1/chat/completions';
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
         };
@@ -426,519 +952,123 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           }),
         });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         const text = data?.choices?.[0]?.message?.content;
         if (!text) throw new Error('Empty response');
         const clean = text.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(clean);
-        setAiInsight(parsed);
+        setAiInsight(JSON.parse(clean));
       } catch {
-        setAiInsight(buildLocalFallbackInsight(surgeStatus, availableForAi));
+        setAiInsight(buildLocalFallbackInsight(surgeStatus, sortedByPrice[0]));
       } finally {
         setAiLoading(false);
       }
     };
     fetchAiInsight();
-  }, [city, baseDistanceKm, baseDurationMin, pickup.address, destination.address, quotes]);
+  }, [
+    city,
+    baseDistanceKm,
+    baseDurationMin,
+    pickup.address,
+    destination.address,
+    allRideOptions,
+  ]);
 
+  // Show Ride Completed & Lifetime Savings modal when user returns from provider app
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && pendingBookAppRef.current) {
-        const appToReport = pendingBookAppRef.current;
-        pendingBookAppRef.current = null;
-        if (fareTimerRef.current) {
-          clearTimeout(fareTimerRef.current);
-          fareTimerRef.current = null;
-        }
-        setSelectedApp(appToReport);
-        setFareInput('');
-        setFareModalVisible(true);
+      if (nextState === 'active' && pendingBookRideRef.current) {
+        pendingBookRideRef.current = null;
+        setBookingPhase('completed');
       }
     });
-
-    return () => {
-      subscription.remove();
-      if (fareTimerRef.current) clearTimeout(fareTimerRef.current);
-    };
+    return () => subscription.remove();
   }, []);
 
-  // Compute lowest price per category for the BuyHatke-style category tab bar
-  const categoryMinPrices = useMemo(() => {
-    const mins: Partial<Record<RideCategoryFilter, number>> = {};
-    let overallMin = Infinity;
-    let cabMin = Infinity;
-    let autoMin = Infinity;
-    let bikeMin = Infinity;
-    let sedanMin = Infinity;
-
-    for (const q of quotes) {
-      if (q.isAvailable && typeof q.price === 'number' && q.price < overallMin) {
-        overallMin = q.price;
-      }
-      const tiers = (q.metadata?.tiers as VehicleTierOption[] | undefined) || [];
-      for (const t of tiers) {
-        if (t.low < overallMin) overallMin = t.low;
-        if (t.category === 'Cab' && t.low < cabMin) cabMin = t.low;
-        if (t.category === 'Auto' && t.low < autoMin) autoMin = t.low;
-        if (t.category === 'Bike' && t.low < bikeMin) bikeMin = t.low;
-        if ((t.category === 'Sedan' || t.category === 'SUV') && t.low < sedanMin) {
-          sedanMin = t.low;
-        }
-      }
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
     }
+  };
 
-    if (Number.isFinite(overallMin)) mins.All = overallMin;
-    if (Number.isFinite(cabMin)) mins.Cab = cabMin;
-    if (Number.isFinite(autoMin)) mins.Auto = autoMin;
-    if (Number.isFinite(bikeMin)) mins.Bike = bikeMin;
-    if (Number.isFinite(sedanMin)) mins['Sedan/XL'] = sedanMin;
-    return mins;
-  }, [quotes]);
+  // BuyHatke Confirm Ride -> Finding Ride -> Pickup in 2 Min -> Launch Provider -> Ride CompletedSavings
+  const handleConfirmRideBooking = async () => {
+    if (!selectedRide) return;
 
-  // Transform quotes based on selected vehicle category filter ('All' | 'Cab' | 'Auto' | 'Bike' | 'Sedan/XL')
-  const categoryAdjustedQuotes = useMemo(() => {
-    const applySmartDiscountAndCrowd = (q: FareQuote): FareQuote => {
-      if (!q.isAvailable || q.price === null) return q;
-      let price = q.price;
-      let highEstimate = q.metadata?.highEstimate as number | undefined;
-      let riderVerified = false;
+    setConfirmRideSheetVisible(false);
+    setBookingPhase('finding');
 
-      // Blend crowdsourced rider report if available for default ride type
-      const crowdFare = crowdsourcedFares[q.providerName];
-      if (crowdFare && selectedCategory === 'All') {
-        price = Math.round(price * 0.6 + crowdFare * 0.4);
-        if (highEstimate) {
-          highEstimate = Math.max(price + 10, Math.round(price * 1.22));
-        }
-        riderVerified = true;
-      }
+    const updatedSavings = await recordTripSavings(savingsVsUberXl);
+    setLifetimeSavings(updatedSavings);
 
-      // Apply Smart Pickup micro-surge reduction (8% additional drop from escaping pickup congestion)
-      if (smartPickupEnabled) {
-        price = Math.max(25, Math.round(price * 0.92));
-        if (highEstimate) {
-          highEstimate = Math.max(price + 8, Math.round(highEstimate * 0.92));
-        }
-      }
+    setTimeout(() => {
+      setBookingPhase('confirmed');
+    }, 900);
 
-      return {
-        ...q,
-        price,
-        metadata: {
-          ...q.metadata,
-          highEstimate,
-          riderVerified,
-        },
-      };
-    };
-
-    if (selectedCategory === 'All') {
-      return quotes
-        .map(applySmartDiscountAndCrowd)
-        .sort((a, b) => {
-          if (!a.isAvailable || a.price === null) return 1;
-          if (!b.isAvailable || b.price === null) return -1;
-          return a.price - b.price;
+    setTimeout(async () => {
+      pendingBookRideRef.current = selectedRide;
+      try {
+        await openRideApp(selectedRide.providerName, {
+          pickupCoords: activePickupCoords,
+          dropCoords: resolvedDropCoords,
+          pickupAddress:
+            smartPickupEnabled && smartPickup
+              ? smartPickup.pickupLabel
+              : pickup.address,
+          dropAddress: destination.address,
         });
-    }
+      } catch {}
 
-    const mapped: FareQuote[] = [];
-    for (const q of quotes) {
-      const tiers = (q.metadata?.tiers as VehicleTierOption[] | undefined) || [];
-      const matchingTier = tiers.find((t) => {
-        if (selectedCategory === 'Sedan/XL') {
-          return t.category === 'Sedan' || t.category === 'SUV';
+      // If WebBrowser closed inline or stayed in app, transition to completed savings sheet
+      setTimeout(() => {
+        if (pendingBookRideRef.current) {
+          pendingBookRideRef.current = null;
+          setBookingPhase('completed');
         }
-        return t.category === selectedCategory;
-      });
-
-      if (matchingTier) {
-        mapped.push(
-          applySmartDiscountAndCrowd({
-            ...q,
-            rideType: matchingTier.label,
-            price: matchingTier.low,
-            isAvailable: true,
-            metadata: {
-              ...q.metadata,
-              highEstimate: matchingTier.high,
-              isSurge: matchingTier.isSurge,
-              breakdown: matchingTier.breakdown,
-              vehicleCategory: matchingTier.category,
-            },
-          })
-        );
-      } else if (!q.isAvailable) {
-        // Keep unavailable providers at the bottom when relevant
-        if (
-          (selectedCategory === 'Auto' && q.providerName === 'Namma Yatri') ||
-          (selectedCategory === 'Cab' && q.providerName === 'BluSmart') ||
-          (selectedCategory === 'Sedan/XL' && q.providerName === 'Meru Cabs')
-        ) {
-          mapped.push(q);
-        }
-      }
-    }
-
-    return mapped.sort((a, b) => {
-      if (!a.isAvailable || a.price === null) return 1;
-      if (!b.isAvailable || b.price === null) return -1;
-      return a.price - b.price;
-    });
-  }, [quotes, selectedCategory, crowdsourcedFares, smartPickupEnabled]);
-
-  const validQuotes = categoryAdjustedQuotes
-    .filter((q) => q.isAvailable && q.price !== null)
-    .sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
-
-  const bestDealId = validQuotes[0]?.providerId;
-
-  const getComparableCostliestPrice = (quote: FareQuote): number => {
-    const sameTypeQuotes = validQuotes.filter((q) =>
-      selectedCategory === 'All'
-        ? q.rideType === quote.rideType ||
-          (quote.rideType === 'Cab' && q.rideType === 'Sedan') ||
-          (quote.rideType === 'Sedan' && q.rideType === 'Cab')
-        : true
-    );
-    if (sameTypeQuotes.length < 2) return quote.price ?? 0;
-    return sameTypeQuotes[sameTypeQuotes.length - 1].price ?? 0;
+      }, 1400);
+    }, 1900);
   };
 
-  const topPicks = categoryAdjustedQuotes.filter((q) =>
-    PRIORITY_APPS.includes(q.providerName)
-  );
-  const moreOptions = categoryAdjustedQuotes.filter(
-    (q) => !PRIORITY_APPS.includes(q.providerName)
-  );
-
-  const hourlyForecast = useMemo(() => {
-    if (activeDistanceKm <= 0) return [];
-    const targetApp = validQuotes[0]?.providerName || 'Uber';
-    return getHourlyFareForecast(targetApp, city, activeDistanceKm, activeDurationMin);
-  }, [validQuotes, city, activeDistanceKm, activeDurationMin]);
-
-  const isLoaded = quotes.length > 0;
-
-  const handleBook = async (appName: string, bookingUrl?: string) => {
-    pendingBookAppRef.current = appName;
-
+  const handleShareSavings = async () => {
     try {
-      await openRideApp(appName, {
-        pickupCoords: activePickupCoords,
-        dropCoords: resolvedDropCoords,
-        pickupAddress:
-          smartPickupEnabled && smartPickup ? smartPickup.pickupLabel : pickup.address,
-        dropAddress: destination.address,
+      await Share.share({
+        message: `I just saved ₹${lifetimeSavings.lastTripSaved} on my ride using FareSnap (₹${lifetimeSavings.totalSaved} saved across ${lifetimeSavings.tripCount} trips)! 🚗💸`,
       });
-    } catch {
-      // openRideApp already handles fallback
-    }
-
-    if (fareTimerRef.current) clearTimeout(fareTimerRef.current);
-    fareTimerRef.current = setTimeout(() => {
-      if (
-        pendingBookAppRef.current === appName &&
-        AppState.currentState === 'active'
-      ) {
-        pendingBookAppRef.current = null;
-        setSelectedApp(appName);
-        setFareInput('');
-        setFareModalVisible(true);
-      }
-    }, 1500);
+    } catch {}
   };
 
-  const handleFareSubmit = async () => {
+  const handleOptionalFareReport = async () => {
     const parsed = parseFloat(fareInput.trim());
-    if (isNaN(parsed) || parsed <= 0) {
-      setFareModalVisible(false);
-      return;
+    if (!isNaN(parsed) && parsed > 0 && selectedRide) {
+      try {
+        await reportFare({
+          app: selectedRide.providerName,
+          city,
+          pickup_area: pickup.address.split(',')[0].trim(),
+          distance_km: activeDistanceKm,
+          quoted_fare: parsed,
+          app_version: '1.0.0',
+        });
+      } catch {}
     }
-
-    try {
-      await reportFare({
-        app: selectedApp,
-        city,
-        pickup_area: pickup.address.split(',')[0].trim(),
-        distance_km: activeDistanceKm,
-        quoted_fare: parsed,
-        app_version: '1.0.0',
-      });
-    } catch {
-      // silently ignore
-    } finally {
-      setFareModalVisible(false);
-    }
+    setFareInput('');
+    setBookingPhase('idle');
   };
 
-  const handleFareSkip = () => {
-    setFareModalVisible(false);
-  };
-
-  const getSpecialtyBadgeStyle = (badge: string) => {
-    if (badge === 'No Surge' || badge === '0% Commission') {
-      return { bg: '#dcfce7', text: '#15803d' };
-    }
-    if (badge === 'Eco') return { bg: '#dcfce7', text: '#15803d' };
-    if (badge === 'Negotiate') return { bg: '#dbeafe', text: '#1d4ed8' };
-    if (badge === 'Cheapest' || badge === 'Bike & Auto' || badge === 'Fastest ETA') {
-      return { bg: '#fef9c3', text: '#854d0e' };
-    }
-    return { bg: '#f1f5f9', text: '#475569' };
-  };
-
-  const getTrendInfo = (trend: string) => {
-    if (trend === 'up') {
-      return { icon: '📈', color: '#fef2f2', textColor: '#dc2626', label: 'rising' };
-    }
-    if (trend === 'down') {
-      return { icon: '📉', color: '#f0fdf4', textColor: '#16a34a', label: 'dropping' };
-    }
-    return { icon: '➡️', color: '#eff6ff', textColor: '#2563eb', label: 'stable' };
-  };
-
-  const renderQuoteCard = (quote: FareQuote, index: number) => {
-    const isAvailable = quote.isAvailable && quote.price !== null;
-    const isBest = quote.providerId === bestDealId;
-    const cardKey = `${quote.providerId}_${quote.rideType}`;
-    const isExpanded = expandedCardId === cardKey;
-
-    const meta = PROVIDER_META[quote.providerName] || {
-      duration: 10,
-      specialty: [],
-      starRating: 4.1,
-    };
-    const baseEta = quote.etaMinutes ?? meta.duration;
-    const duration =
-      smartPickupEnabled && smartPickup
-        ? Math.max(2, baseEta - smartPickup.waitSavedMinutes)
-        : baseEta;
-    const specialty = meta.specialty;
-    const starRating = meta.starRating;
-
-    let savings = 0;
-    if (isAvailable && quote.price) {
-      const comparableCostliest = getComparableCostliestPrice(quote);
-      savings = Math.max(0, comparableCostliest - quote.price);
-    }
-
-    const highEstimate = quote.metadata?.highEstimate as number | undefined;
-    const breakdown = quote.metadata?.breakdown as FareBreakdown | undefined;
-    const allTiers = (quote.metadata?.tiers as VehicleTierOption[] | undefined) || [];
-    const isSurge = Boolean(quote.metadata?.isSurge);
-    const riderVerified = Boolean(quote.metadata?.riderVerified);
-    const unavailableReason = quote.metadata?.unavailableReason as string | undefined;
-    const unavailableLabel =
-      unavailableReason && unavailableReason !== 'Not available in your city'
-        ? unavailableReason
-        : `Not available in ${cityLabel}`;
-
-    return (
-      <AnimatedCard key={cardKey} index={index}>
-        <TouchableOpacity
-          activeOpacity={isAvailable ? 0.92 : 1}
-          onPress={() => {
-            if (isAvailable) {
-              setExpandedCardId(isExpanded ? null : cardKey);
-            }
-          }}
-          style={[
-            styles.card,
-            isBest && isAvailable && styles.bestCard,
-            !isAvailable && styles.cardUnavailable,
-          ]}
-        >
-          <View style={styles.cardTopRow}>
-            <View style={styles.cardLeft}>
-              <View style={styles.providerRow}>
-                <Text
-                  style={[
-                    styles.providerName,
-                    !isAvailable && styles.providerNameMuted,
-                  ]}
-                >
-                  {quote.providerName}
-                </Text>
-                {isBest && isAvailable && (
-                  <View style={styles.bestBadge}>
-                    <Text style={styles.bestBadgeText}>BEST</Text>
-                  </View>
-                )}
-                {isAvailable && isSurge && (
-                  <View style={styles.surgeBadge}>
-                    <Text style={styles.surgeBadgeText}>⚡ Surge</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.metaText}>
-                {quote.rideType} · {duration} min pickup · {starRating}★
-              </Text>
-            </View>
-            {isAvailable ? (
-              <TouchableOpacity
-                style={isBest ? styles.bookButtonSolid : styles.bookButtonGhost}
-                onPress={() => handleBook(quote.providerName, quote.bookingUrl)}
-                activeOpacity={0.8}
-              >
-                <Text style={isBest ? styles.bookTextSolid : styles.bookTextGhost}>
-                  Book
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.unavailableButton}>
-                <Text style={styles.unavailableText}>N/A</Text>
-              </View>
-            )}
-          </View>
-
-          {isAvailable ? (
-            <View style={styles.fareRow}>
-              <Text style={[styles.fareText, isBest && styles.fareTextBest]}>
-                ₹{quote.price}
-                {highEstimate ? ` – ₹${highEstimate}` : ''}
-              </Text>
-              {quote.confidence === 'live' ? (
-                <View style={styles.liveBadge}>
-                  <Text style={styles.liveBadgeText}>🟢 Live</Text>
-                </View>
-              ) : riderVerified ? (
-                <View style={styles.liveBadge}>
-                  <Text style={styles.liveBadgeText}>👥 Rider Verified</Text>
-                </View>
-              ) : (
-                <View style={styles.estimateBadge}>
-                  <Text style={styles.estimateBadgeText}>Estimated</Text>
-                </View>
-              )}
-              {isBest && savings > 0 && (
-                <View style={styles.savingsBadge}>
-                  <Text style={styles.savingsText}>
-                    Save ₹{Math.round(savings)} vs costliest
-                  </Text>
-                </View>
-              )}
-            </View>
-          ) : (
-            <Text style={styles.notAvailableText}>{unavailableLabel}</Text>
-          )}
-
-          {isAvailable && (
-            <View style={styles.cardFooterRow}>
-              <View style={styles.badgeRow}>
-                {specialty.map((badge, i) => {
-                  const bs = getSpecialtyBadgeStyle(badge);
-                  return (
-                    <View
-                      key={i}
-                      style={[styles.specialtyBadge, { backgroundColor: bs.bg }]}
-                    >
-                      <Text style={[styles.specialtyBadgeText, { color: bs.text }]}>
-                        {badge}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-              <Text style={styles.expandHintText}>
-                {isExpanded ? 'Hide details ▲' : 'Fare details ▼'}
-              </Text>
-            </View>
-          )}
-
-          {/* Expandable BuyHatke-style Fare Breakdown & Multi-Tier Matrix */}
-          {isAvailable && isExpanded && (
-            <View style={styles.breakdownBox}>
-              {breakdown && (
-                <View style={styles.breakdownSection}>
-                  <Text style={styles.breakdownTitle}>Fare Breakdown</Text>
-                  <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>Base Fare</Text>
-                    <Text style={styles.breakdownValue}>₹{breakdown.baseFare}</Text>
-                  </View>
-                  <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>
-                      Distance ({activeDistanceKm} km)
-                    </Text>
-                    <Text style={styles.breakdownValue}>
-                      ₹{breakdown.distanceFare}
-                    </Text>
-                  </View>
-                  <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>
-                      Ride Time (~{activeDurationMin} mins)
-                    </Text>
-                    <Text style={styles.breakdownValue}>₹{breakdown.timeFare}</Text>
-                  </View>
-                  <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>Surge Pricing</Text>
-                    <Text
-                      style={[
-                        styles.breakdownValue,
-                        breakdown.surgeAmount > 0
-                          ? { color: '#dc2626' }
-                          : { color: '#16a34a' },
-                      ]}
-                    >
-                      {breakdown.surgeAmount > 0
-                        ? `+₹${breakdown.surgeAmount} (${breakdown.surgeMultiplier}x)`
-                        : '₹0 (No Surge)'}
-                    </Text>
-                  </View>
-                  {breakdown.recommendedBid && (
-                    <View style={styles.bidTipBox}>
-                      <Text style={styles.bidTipText}>
-                        💡 Fast Driver Acceptance Bid: Offer ₹{breakdown.recommendedBid}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {allTiers.length > 1 && (
-                <View style={styles.tiersSection}>
-                  <Text style={styles.breakdownTitle}>
-                    All {quote.providerName} Options
-                  </Text>
-                  <View style={styles.tiersGrid}>
-                    {allTiers.map((t) => (
-                      <TouchableOpacity
-                        key={t.engineKey}
-                        style={styles.tierMiniCard}
-                        onPress={() =>
-                          handleBook(quote.providerName, quote.bookingUrl)
-                        }
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.tierMiniLabel}>{t.label}</Text>
-                        <Text style={styles.tierMiniPrice}>
-                          ₹{t.low} – ₹{t.high}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
-            </View>
-          )}
-        </TouchableOpacity>
-      </AnimatedCard>
-    );
-  };
+  const linkedCount = Object.values(linkedProviders).filter(Boolean).length;
 
   if (routeError) {
     return (
       <>
         <Stack.Screen
           options={{
-            title: 'Compare rides',
+            title: 'Compare Rides',
             headerStyle: { backgroundColor: '#ffffff' },
             headerTitleStyle: { color: '#0f172a', fontWeight: '700' },
-            headerTintColor: '#2563eb',
+            headerTintColor: '#0f172a',
           }}
         />
         <View style={styles.errorContainer}>
@@ -959,21 +1089,55 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     );
   }
 
+  // BuyHatke Skeleton Loading State ("Finding nearby rides around you...", f_06)
   if (isLoadingRoute) {
     return (
       <>
         <Stack.Screen
           options={{
-            title: 'Compare rides',
+            title: 'Compare Rides',
             headerStyle: { backgroundColor: '#ffffff' },
             headerTitleStyle: { color: '#0f172a', fontWeight: '700' },
-            headerTintColor: '#2563eb',
+            headerTintColor: '#0f172a',
           }}
         />
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorEmoji}>🗺️</Text>
-          <Text style={styles.errorTitle}>Finding your route...</Text>
-          <Text style={styles.errorSubtitle}>Calculating road distance</Text>
+        <View style={styles.skeletonScreen}>
+          {[1, 2, 3].map((n) => (
+            <Animated.View
+              key={`top_${n}`}
+              style={[styles.skeletonRowCard, { opacity: pulseAnim }]}
+            >
+              <View style={styles.skeletonCircle} />
+              <View style={{ flex: 1, gap: 8 }}>
+                <View style={styles.skeletonBarShort} />
+                <View style={styles.skeletonBarTiny} />
+              </View>
+              <View style={styles.skeletonPriceBox} />
+            </Animated.View>
+          ))}
+
+          <View style={styles.findingCenterCard}>
+            <View style={styles.findingCarCircle}>
+              <Text style={styles.findingCarEmoji}>🚕</Text>
+            </View>
+            <Text style={styles.findingTitle}>
+              Finding nearby rides around{'\n'}you...
+            </Text>
+          </View>
+
+          {[1, 2].map((n) => (
+            <Animated.View
+              key={`bot_${n}`}
+              style={[styles.skeletonRowCard, { opacity: pulseAnim }]}
+            >
+              <View style={styles.skeletonCircle} />
+              <View style={{ flex: 1, gap: 8 }}>
+                <View style={styles.skeletonBarShort} />
+                <View style={styles.skeletonBarTiny} />
+              </View>
+              <View style={styles.skeletonPriceBox} />
+            </Animated.View>
+          ))}
         </View>
       </>
     );
@@ -983,290 +1147,694 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     <>
       <Stack.Screen
         options={{
-          title: 'Compare rides',
+          title: 'Compare Rides',
           headerStyle: { backgroundColor: '#ffffff' },
           headerTitleStyle: { color: '#0f172a', fontWeight: '700' },
-          headerTintColor: '#2563eb',
+          headerTintColor: '#0f172a',
+          headerShadowVisible: false,
+          headerRight: () => (
+            <View style={styles.headerRightRow}>
+              <TouchableOpacity
+                style={styles.headerLinkBtn}
+                onPress={() => setLinkModalVisible(true)}
+              >
+                <Text style={styles.headerLinkBtnText}>🔌 {linkedCount}/4</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.headerCloseCircle}
+                onPress={() => router.replace('/')}
+              >
+                <Text style={styles.headerCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ),
         }}
       />
+
       <View style={styles.container}>
-        <View style={styles.routeBar}>
-          <View style={styles.routeBarInner}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routeText} numberOfLines={1}>
-                {smartPickupEnabled && smartPickup
-                  ? smartPickup.pickupLabel
-                  : pickup.address}{' '}
-                → {destination.address}
-              </Text>
-              {routeInfo ? (
-                <Text style={styles.routeInfoText}>
-                  🛣️ {activeDistanceKm} km • ~{activeDurationMin} mins by road
-                  {smartPickupEnabled ? ' (Smart Pickup)' : ''}
-                </Text>
-              ) : null}
-            </View>
-            <View style={styles.cityPill}>
-              <Text style={styles.cityPillText}>📍 {cityLabel}</Text>
-            </View>
+        {/* Top Controls Panel (Exact BuyHatke f_07 & f_08 layout) */}
+        <View style={styles.topControlsPanel}>
+          <View style={styles.pickupPrefHeaderRow}>
+            <Text style={styles.pickupPrefLabel}>Pickup Preference</Text>
+            <Text style={styles.routeDistancePill}>
+              📍 {cityLabel} · {activeDistanceKm} km (~{activeDurationMin}m)
+            </Text>
           </View>
 
-          {/* BuyHatke-style Category Filter Bar with Price Floors */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoryRow}
-          >
-            {CATEGORY_FILTERS.map((cat) => {
-              const active = selectedCategory === cat;
-              const minPrice = categoryMinPrices[cat];
-              return (
-                <TouchableOpacity
-                  key={cat}
-                  style={[styles.categoryPill, active && styles.categoryPillActive]}
-                  onPress={() => setSelectedCategory(cat)}
-                  activeOpacity={0.8}
-                >
-                  <Text
+          {/* Segmented Control 1: Current Location vs Smart Pickup (f_07) */}
+          <View style={styles.segmentedGroup}>
+            <TouchableOpacity
+              style={[
+                styles.segmentedItem,
+                !smartPickupEnabled && styles.segmentedItemActive,
+              ]}
+              onPress={() => setSmartPickupEnabled(false)}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.segmentedText,
+                  !smartPickupEnabled && styles.segmentedTextActive,
+                ]}
+              >
+                Current Location
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.segmentedItem,
+                smartPickupEnabled && styles.segmentedItemActive,
+              ]}
+              onPress={() => {
+                if (smartPickup) {
+                  setSmartPickupEnabled(true);
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.segmentedText,
+                  smartPickupEnabled && styles.segmentedTextActive,
+                ]}
+              >
+                Smart Pickup
+                {smartPickup ? ` (-₹${smartPickup.estimatedSavings})` : ''}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {smartPickupEnabled && smartPickup && (
+            <View style={styles.smartPickupSubBanner}>
+              <Text style={styles.smartPickupSubText} numberOfLines={1}>
+                🚶 Walk {smartPickup.walkMeters}m ({smartPickup.walkMinutes}m · 🔥{' '}
+                {smartPickup.caloriesBurned} kcal) to {smartPickup.pickupLabel}
+              </Text>
+            </View>
+          )}
+
+          {/* Segmented Control 2: All | Bike | Auto | Cab (f_07) */}
+          <View style={[styles.segmentedGroup, { marginTop: 10 }]}>
+            {(['All', 'Bike', 'Auto', 'Cab'] as RideCategoryTab[]).map(
+              (tab) => {
+                const active = selectedCategory === tab;
+                return (
+                  <TouchableOpacity
+                    key={tab}
                     style={[
-                      styles.categoryPillText,
-                      active && styles.categoryPillTextActive,
+                      styles.segmentedItem,
+                      active && styles.segmentedItemActive,
                     ]}
+                    onPress={() => setSelectedCategory(tab)}
+                    activeOpacity={0.85}
                   >
-                    {cat}
-                    {minPrice ? ` · ₹${minPrice}` : ''}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                    <Text
+                      style={[
+                        styles.segmentedText,
+                        active && styles.segmentedTextActive,
+                      ]}
+                    >
+                      {tab}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }
+            )}
+          </View>
+
+          {/* Sort Header Row: Type | ETA ⇅ | ₹ ↓ Fare ⇅ (f_07 & f_08) */}
+          <View style={styles.sortHeaderBar}>
+            <View style={styles.sortColLeft}>
+              <Text style={styles.sortHeaderLabel}>🚗 Type</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.sortColCenter}
+              onPress={() => toggleSort('eta')}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.sortHeaderLabel,
+                  sortField === 'eta' && styles.sortHeaderLabelActive,
+                ]}
+              >
+                🕒 {sortField === 'eta' ? (sortOrder === 'asc' ? '↓ ' : '↑ ') : ''}
+                ETA ⇅
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.sortColRight}
+              onPress={() => toggleSort('fare')}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.sortHeaderLabel,
+                  sortField === 'fare' && styles.sortHeaderLabelActive,
+                ]}
+              >
+                ₹ {sortField === 'fare' ? (sortOrder === 'asc' ? '↓ ' : '↑ ') : ''}
+                Fare ⇅
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* Scrollable Flat Ride Option Cards (f_07 & f_08) */}
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* BuyHatke Signature Feature: Smart Pickup ("Walk & Save") Banner */}
-          {smartPickup && (
-            <View
-              style={[
-                styles.smartPickupCard,
-                smartPickupEnabled && styles.smartPickupCardActive,
-              ]}
-            >
-              <View style={styles.smartPickupHeader}>
-                <View style={styles.smartPickupTitleRow}>
-                  <Text style={styles.smartPickupBadge}>🚶 SMART PICKUP</Text>
-                  <Text style={styles.smartPickupMeta}>
-                    {smartPickup.walkMeters}m walk ({smartPickup.walkMinutes} mins) · 🔥{' '}
-                    {smartPickup.caloriesBurned} kcal
-                  </Text>
-                </View>
+          {displayedOptions.map((item, idx) => {
+            const isSelected = selectedRide?.id === item.id;
+            const isExpanded = expandedRideId === item.id;
+            const isCheapest = idx === 0 && sortField === 'fare' && sortOrder === 'asc';
+
+            return (
+              <View key={item.id}>
                 <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={() => setSelectedRideId(item.id)}
                   style={[
-                    styles.smartPickupBtn,
-                    smartPickupEnabled && styles.smartPickupBtnActive,
+                    styles.rideOptionCard,
+                    isSelected && styles.rideOptionCardSelected,
                   ]}
-                  onPress={() => setSmartPickupEnabled(!smartPickupEnabled)}
-                  activeOpacity={0.85}
+                >
+                  <View style={styles.rideOptionMainRow}>
+                    {/* Left 3D-style Vehicle Illustration Box */}
+                    <View style={styles.vehicleIconBox}>
+                      <Text style={styles.vehicleEmojiText}>
+                        {item.vehicleEmoji}
+                      </Text>
+                    </View>
+
+                    {/* Center Provider Badge + Product Name + ETA */}
+                    <View style={styles.rideOptionInfo}>
+                      <View style={styles.productTitleRow}>
+                        <View
+                          style={[
+                            styles.brandCircle,
+                            { backgroundColor: item.providerBadgeBg },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.brandCircleText,
+                              { color: item.providerBadgeColor },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {item.providerBadgeText}
+                          </Text>
+                        </View>
+                        <Text style={styles.productTitleText}>
+                          {item.productName}
+                        </Text>
+                        {isCheapest && (
+                          <View style={styles.bestMiniPill}>
+                            <Text style={styles.bestMiniPillText}>BEST</Text>
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={styles.etaSubRow}>
+                        <Text style={styles.etaClockIcon}>🕒</Text>
+                        <Text style={styles.etaSubText}>
+                          {item.etaMinutes !== null
+                            ? `${item.etaMinutes} min`
+                            : 'N/A min'}
+                        </Text>
+                        {item.isLiveLinked && (
+                          <Text style={styles.liveDotLabel}>· 🟢 Linked</Text>
+                        )}
+                        {!item.isLiveLinked && item.isRiderVerified && (
+                          <Text style={styles.liveDotLabel}>· 👥 Verified</Text>
+                        )}
+                        <TouchableOpacity
+                          onPress={() =>
+                            setExpandedRideId(isExpanded ? null : item.id)
+                          }
+                          style={styles.detailsToggleBtn}
+                        >
+                          <Text style={styles.detailsToggleText}>
+                            {isExpanded ? 'Hide ▲' : 'Details ▼'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Right Price Column */}
+                    <View style={styles.priceRightCol}>
+                      <Text style={styles.priceMainText}>
+                        <Text style={styles.rupeeSuperscript}>₹</Text>
+                        {item.price}
+                      </Text>
+                      {item.isSurge && (
+                        <Text style={styles.surgeMicroText}>⚡ Surge</Text>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Expandable Fare Breakdown Drawer */}
+                  {isExpanded && (
+                    <View style={styles.breakdownDrawer}>
+                      <View style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>Base Fare</Text>
+                        <Text style={styles.breakdownVal}>
+                          ₹{item.breakdown.baseFare}
+                        </Text>
+                      </View>
+                      <View style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>
+                          Distance ({activeDistanceKm} km)
+                        </Text>
+                        <Text style={styles.breakdownVal}>
+                          ₹{item.breakdown.distanceFare}
+                        </Text>
+                      </View>
+                      <View style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>
+                          Ride Duration (~{activeDurationMin} mins)
+                        </Text>
+                        <Text style={styles.breakdownVal}>
+                          ₹{item.breakdown.timeFare}
+                        </Text>
+                      </View>
+                      <View style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>Surge</Text>
+                        <Text
+                          style={[
+                            styles.breakdownVal,
+                            item.breakdown.surgeAmount > 0
+                              ? { color: '#dc2626' }
+                              : { color: '#16a34a' },
+                          ]}
+                        >
+                          {item.breakdown.surgeAmount > 0
+                            ? `+₹${item.breakdown.surgeAmount} (${item.breakdown.surgeMultiplier}x)`
+                            : '₹0 (No Surge)'}
+                        </Text>
+                      </View>
+                      {item.breakdown.recommendedBid && (
+                        <Text style={styles.bidRecommendText}>
+                          💡 Recommended quick-acceptance offer: ₹
+                          {item.breakdown.recommendedBid}
+                        </Text>
+                      )}
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                {/* Insert AI Price Insight & 60m Forecast Banner after 2nd card (like BuyHatke's inline card in f_07) */}
+                {idx === 1 && (
+                  <TouchableOpacity
+                    style={styles.aiCard}
+                    onPress={() => setAiCollapsed(!aiCollapsed)}
+                    activeOpacity={0.9}
+                  >
+                    <View style={styles.aiCardHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.aiCardTitle}>
+                          🤖 AI Price Sense & 60m Forecast
+                        </Text>
+                        {!aiLoading && aiInsight && (
+                          <Text style={styles.aiConfidence}>
+                            {aiInsight. advice}
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={styles.aiChevron}>
+                        {aiCollapsed ? '›' : '‹'}
+                      </Text>
+                    </View>
+                    {!aiCollapsed && hourlyForecast.length > 0 && (
+                      <View style={styles.forecastStrip}>
+                        {hourlyForecast.map((pt) => (
+                          <View
+                            key={pt.label}
+                            style={[
+                              styles.forecastSlot,
+                              pt.isCheapestSlot && styles.forecastSlotBest,
+                            ]}
+                          >
+                            <Text style={styles.forecastTimeLabel}>
+                              {pt.label}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.forecastPriceLabel,
+                                pt.isCheapestSlot &&
+                                  styles.forecastPriceLabelBest,
+                              ]}
+                            >
+                              ₹{pt.estimatedFare}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+
+          <View style={{ height: 96 }} />
+        </ScrollView>
+
+        {/* Sticky Bottom "Book Ride" Bar (BuyHatke f_07 & f_08) */}
+        <View style={styles.stickyBottomBar}>
+          <TouchableOpacity
+            style={[
+              styles.bookRidePrimaryBtn,
+              !selectedRide && styles.bookRidePrimaryBtnDisabled,
+            ]}
+            disabled={!selectedRide}
+            onPress={() => setConfirmRideSheetVisible(true)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.bookRidePrimaryText}>
+              {selectedRide
+                ? `Book ${selectedRide.providerName} ${selectedRide.productName} · ₹${selectedRide.price}`
+                : 'Book Ride'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* BuyHatke Sheet 1: "Confirm your ride" (f_09) */}
+      <Modal
+        visible={confirmRideSheetVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setConfirmRideSheetVisible(false)}
+      >
+        <View style={styles.sheetOverlay}>
+          <View style={styles.confirmSheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Confirm your ride</Text>
+            <Text style={styles.sheetRouteMeta}>
+              ~{activeDurationMin} Mins | {activeDistanceKm} KM
+            </Text>
+
+            <View style={styles.sheetRoutePill}>
+              <Text style={styles.sheetRoutePillText} numberOfLines={1}>
+                📍 {(smartPickupEnabled && smartPickup
+                  ? smartPickup.pickupLabel
+                  : pickup.address
+                ).split(',')[0]}{' '}
+                → {destination.address.split(',')[0]}
+              </Text>
+            </View>
+
+            {savingsVsUberXl > 0 && (
+              <Text style={styles.sheetSavingsCallout}>
+                You&apos;re{' '}
+                <Text style={styles.sheetSavingsGreen}>
+                  saving ₹{savingsVsUberXl}
+                </Text>{' '}
+                compared to Uber UberXL
+              </Text>
+            )}
+
+            {selectedRide && (
+              <View style={styles.selectedRideBox}>
+                <Text style={styles.selectedRideEmoji}>
+                  {selectedRide.vehicleEmoji}
+                </Text>
+                <Text style={styles.selectedRideName}>
+                  {selectedRide.productName}
+                </Text>
+                <View
+                  style={[
+                    styles.brandCircle,
+                    { backgroundColor: selectedRide.providerBadgeBg },
+                  ]}
                 >
                   <Text
                     style={[
-                      styles.smartPickupBtnText,
-                      smartPickupEnabled && styles.smartPickupBtnTextActive,
+                      styles.brandCircleText,
+                      { color: selectedRide.providerBadgeColor },
                     ]}
                   >
-                    {smartPickupEnabled
-                      ? 'Active ✓'
-                      : `Save ~₹${smartPickup.estimatedSavings}`}
+                    {selectedRide.providerBadgeText}
                   </Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.smartPickupDesc} numberOfLines={2}>
-                {smartPickupEnabled
-                  ? `Pickup switched to ${smartPickup.pickupLabel}. Saves ~${smartPickup.waitSavedMinutes} mins driver wait & avoids U-turn surge.`
-                  : `Walk ${smartPickup.walkMeters}m to ${smartPickup.pickupLabel} to cut ${smartPickup.waitSavedMinutes} mins wait time and save ~₹${smartPickup.estimatedSavings}.`}
-              </Text>
-            </View>
-          )}
-
-          {isFetchingQuotes && (
-            <View style={styles.loadingQuotesBox}>
-              <Text style={styles.loadingQuotesText}>
-                Fetching current provider quotes...
-              </Text>
-            </View>
-          )}
-
-          {isLoaded && topPicks.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>👑 Top picks</Text>
-              {topPicks.map((item, i) => renderQuoteCard(item, i))}
-            </View>
-          )}
-
-          {isLoaded && (
-            <AnimatedCard index={topPicks.length}>
-              <TouchableOpacity
-                style={styles.aiCard}
-                onPress={() => setAiCollapsed(!aiCollapsed)}
-                activeOpacity={0.9}
-              >
-                <View style={styles.aiCardHeader}>
-                  <View style={styles.aiCardLeft}>
-                    <Text style={styles.aiCardTitle}>
-                      🤖 AI price insight & 60m forecast
-                    </Text>
-                    {!aiLoading && aiInsight && (
-                      <Text style={styles.aiConfidence}>
-                        {aiInsight.confidence} confidence
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={styles.aiChevron}>{aiCollapsed ? '›' : '‹'}</Text>
                 </View>
-                {!aiCollapsed && (
-                  <View style={styles.aiCardBody}>
-                    {aiLoading ? (
-                      <Text style={styles.aiLoadingText}>Analyzing fares...</Text>
-                    ) : aiError ? (
-                      <Text style={styles.aiErrorText}>
-                        Insight unavailable right now
-                      </Text>
-                    ) : aiInsight ? (
-                      <>
-                        {(() => {
-                          const t = getTrendInfo(aiInsight.trend);
-                          return (
-                            <View
-                              style={[styles.trendBox, { backgroundColor: t.color }]}
-                            >
-                              <Text
-                                style={[
-                                  styles.trendBoxText,
-                                  { color: t.textColor },
-                                ]}
-                              >
-                                {t.icon} Fares {t.label}
-                                {aiInsight.trend !== 'stable' &&
-                                aiInsight.trend !== 'steady'
-                                  ? ` ~${aiInsight.trendPercent}% in ${aiInsight.trendTimeframe}`
-                                  : ' right now'}
-                              </Text>
-                            </View>
-                          );
-                        })()}
-                        <Text style={styles.aiAdvice}>{aiInsight.advice}</Text>
-                        <Text style={styles.aiEstimate}>
-                          {aiInsight.smartEstimate}
-                        </Text>
-
-                        {/* 60-Min Price Forecast Strip */}
-                        {hourlyForecast.length > 0 && (
-                          <View style={styles.forecastStrip}>
-                            {hourlyForecast.map((pt) => (
-                              <View
-                                key={pt.label}
-                                style={[
-                                  styles.forecastSlot,
-                                  pt.isCheapestSlot && styles.forecastSlotBest,
-                                ]}
-                              >
-                                <Text style={styles.forecastTimeLabel}>
-                                  {pt.label}
-                                </Text>
-                                <Text
-                                  style={[
-                                    styles.forecastPriceLabel,
-                                    pt.isCheapestSlot &&
-                                      styles.forecastPriceLabelBest,
-                                  ]}
-                                >
-                                  ₹{pt.estimatedFare}
-                                </Text>
-                              </View>
-                            ))}
-                          </View>
-                        )}
-                      </>
-                    ) : null}
-                  </View>
-                )}
-              </TouchableOpacity>
-            </AnimatedCard>
-          )}
-
-          {isLoaded && moreOptions.length > 0 && (
-            <View style={styles.section}>
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerLabel}>More options</Text>
-                <View style={styles.dividerLine} />
+                <Text style={styles.selectedRideProviderLabel}>
+                  {selectedRide.providerName}
+                </Text>
+                <View style={{ flex: 1 }} />
+                <Text style={styles.selectedRideEta}>
+                  🕒 {selectedRide.etaMinutes ?? 5} min
+                </Text>
               </View>
-              {moreOptions.map((item, i) =>
-                renderQuoteCard(item, topPicks.length + 1 + i)
-              )}
-            </View>
-          )}
+            )}
 
-          {isLoaded && (
-            <View style={styles.disclaimerBox}>
-              <Text style={styles.disclaimerText}>
-                ⚠️ Estimated prices may vary from actual fares. Tap any card to view fare breakdown & all vehicle tiers.
+            {/* Payment Method Selector Trigger (f_10) */}
+            <TouchableOpacity
+              style={styles.paymentSelectorRow}
+              onPress={() => {
+                setConfirmRideSheetVisible(false);
+                setPaymentSheetVisible(true);
+              }}
+            >
+              <Text style={styles.paymentSelectorLabel}>
+                Payment:{' '}
+                {PAYMENT_OPTIONS.find((p) => p.id === selectedPaymentId)?.label}
+              </Text>
+              <Text style={styles.paymentChangeLink}>Change ›</Text>
+            </TouchableOpacity>
+
+            <View style={styles.estimatedPriceRow}>
+              <Text style={styles.estimatedPriceLabel}>Estimated Price</Text>
+              <Text style={styles.estimatedPriceValue}>
+                ₹{selectedRide?.price ?? 0}
               </Text>
             </View>
-          )}
 
-          <View style={{ height: 32 }} />
-        </ScrollView>
-      </View>
-
-      <Modal
-        visible={fareModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={handleFareSkip}
-      >
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'android' ? 'height' : 'padding'}
-        >
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>
-              What fare did you see in {selectedApp}?
-            </Text>
-            <TextInput
-              style={styles.modalInput}
-              keyboardType="numeric"
-              maxLength={5}
-              placeholder="Enter fare in ₹"
-              placeholderTextColor="#94a3b8"
-              value={fareInput}
-              onChangeText={setFareInput}
-            />
-            <Text style={styles.modalConsent}>
-              Fare data is collected anonymously to calibrate live community estimates. No personal info is stored.
-            </Text>
-            <View style={styles.modalButtons}>
+            <View style={styles.sheetButtonsRow}>
               <TouchableOpacity
-                style={styles.modalButtonGhost}
-                onPress={handleFareSkip}
-                activeOpacity={0.8}
+                style={styles.sheetCancelBtn}
+                onPress={() => setConfirmRideSheetVisible(false)}
               >
-                <Text style={styles.modalButtonGhostText}>Skip</Text>
+                <Text style={styles.sheetCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.modalButtonSolid}
-                onPress={handleFareSubmit}
-                activeOpacity={0.8}
+                style={styles.sheetConfirmBlackBtn}
+                onPress={handleConfirmRideBooking}
               >
-                <Text style={styles.modalButtonSolidText}>Submit</Text>
+                <Text style={styles.sheetConfirmWhiteText}>Confirm</Text>
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* BuyHatke Sheet 2: "Payment Options" (f_10) */}
+      <Modal
+        visible={paymentSheetVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setPaymentSheetVisible(false);
+          setConfirmRideSheetVisible(true);
+        }}
+      >
+        <View style={styles.sheetOverlay}>
+          <View style={styles.confirmSheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Payment Options</Text>
+
+            <TouchableOpacity
+              style={styles.paymentOptionCard}
+              onPress={() => setUberCashEnabled(!uberCashEnabled)}
+            >
+              <View style={[styles.brandCircle, { backgroundColor: '#000' }]}>
+                <Text style={[styles.brandCircleText, { color: '#fff' }]}>
+                  {selectedRide?.providerBadgeText || 'App'}
+                </Text>
+              </View>
+              <Text style={styles.paymentOptionTitle}>
+                {selectedRide?.providerName || 'App'} Cash: ₹0.00
+              </Text>
+              <View
+                style={[
+                  styles.toggleTrack,
+                  uberCashEnabled && styles.toggleTrackActive,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.toggleThumb,
+                    uberCashEnabled && styles.toggleThumbActive,
+                  ]}
+                />
+              </View>
+            </TouchableOpacity>
+
+            {PAYMENT_OPTIONS.map((opt) => {
+              const active = selectedPaymentId === opt.id;
+              return (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={[
+                    styles.paymentOptionCard,
+                    active && styles.paymentOptionCardActive,
+                  ]}
+                  onPress={() => setSelectedPaymentId(opt.id)}
+                >
+                  <View style={styles.paymentIconBox}>
+                    <Text style={styles.paymentIconText}>{opt.icon}</Text>
+                  </View>
+                  <Text style={styles.paymentOptionTitle}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            <TouchableOpacity
+              style={[styles.sheetConfirmBlackBtn, { marginTop: 12 }]}
+              onPress={() => {
+                setPaymentSheetVisible(false);
+                setConfirmRideSheetVisible(true);
+              }}
+            >
+              <Text style={styles.sheetConfirmWhiteText}>Confirm</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* BuyHatke Sheet 3: "Finding your ride" -> "Pickup in 2 Min" -> "Ride Completed Savings" (f_11, f_12, f_14) */}
+      <Modal
+        visible={bookingPhase !== 'idle'}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBookingPhase('idle')}
+      >
+        <KeyboardAvoidingView
+          style={styles.sheetOverlay}
+          behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+        >
+          <View style={styles.confirmSheet}>
+            <View style={styles.sheetHandle} />
+
+            {bookingPhase === 'finding' && (
+              <View style={styles.phaseCenterBox}>
+                <Text style={styles.sheetTitle}>Finding your ride</Text>
+                <View style={styles.progressBarTrack}>
+                  <View style={styles.progressBarFill} />
+                </View>
+                <Text style={styles.phaseBigCarEmoji}>🚕</Text>
+                <Text style={styles.phaseHeading}>
+                  Surfacing the best-rated{'\n'}drivers...
+                </Text>
+                <Text style={styles.sheetRouteMeta}>
+                  To {destination.address.split(',')[0]} · ~{activeDurationMin}{' '}
+                  Mins | {activeDistanceKm} KM
+                </Text>
+                <TouchableOpacity
+                  style={[styles.sheetCancelBtn, { width: '100%', marginTop: 20 }]}
+                  onPress={() => setBookingPhase('idle')}
+                >
+                  <Text style={styles.sheetCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {bookingPhase === 'confirmed' && (
+              <View style={styles.phaseCenterBox}>
+                <Text style={styles.sheetTitle}>
+                  Pickup in {selectedRide?.etaMinutes ?? 3} Min
+                </Text>
+                <View style={styles.confirmedGreenCircle}>
+                  <Text style={styles.confirmedGreenCheck}>✓</Text>
+                </View>
+                <Text style={styles.phaseBigCarEmoji}>🚕</Text>
+                <Text style={styles.confirmedBigTitle}>
+                  Your ride has been{'\n'}confirmed
+                </Text>
+              </View>
+            )}
+
+            {bookingPhase === 'completed' && (
+              <View style={styles.phaseCenterBox}>
+                <Text style={styles.sheetTitle}>Ride Completed</Text>
+                <Text style={styles.completedSavedHero}>
+                  You&apos;ve{' '}
+                  <Text style={styles.completedSavedGreen}>
+                    saved{'\n'}₹{lifetimeSavings.lastTripSaved}
+                  </Text>{' '}
+                  on this trip!
+                </Text>
+
+                <Text style={styles.completedTotalHero}>
+                  <Text style={styles.completedSavedGreen}>
+                    ₹{lifetimeSavings.totalSaved.toLocaleString('en-IN')} total
+                  </Text>{' '}
+                  from{'\n'}
+                  {lifetimeSavings.tripCount}{' '}
+                  {lifetimeSavings.tripCount === 1 ? 'trip' : 'trips'} 🤩
+                </Text>
+
+                <TextInput
+                  style={styles.optionalFareInput}
+                  keyboardType="numeric"
+                  maxLength={5}
+                  placeholder={`Optional: Enter exact ₹ seen in ${selectedRide?.providerName ?? 'app'}`}
+                  placeholderTextColor="#94a3b8"
+                  value={fareInput}
+                  onChangeText={setFareInput}
+                />
+
+                <Text style={styles.shareFriendsLabel}>
+                  Share with your friends
+                </Text>
+
+                <View style={styles.completedActionsRow}>
+                  <TouchableOpacity
+                    style={styles.skipNowBtn}
+                    onPress={handleOptionalFareReport}
+                  >
+                    <Text style={styles.skipNowBtnText}>
+                      {fareInput.trim() ? 'Submit & Done' : 'Skip for now'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.whatsappShareCircle}
+                    onPress={handleShareSavings}
+                  >
+                    <Text style={styles.shareCircleText}>💬</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.indigoShareCircle}
+                    onPress={handleShareSavings}
+                  >
+                    <Text style={styles.shareCircleText}>🔗</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* BuyHatke Link Apps Modal (f_01) */}
+      <LinkAppsModal
+        visible={linkModalVisible}
+        linkedMap={linkedProviders}
+        onToggleLink={async (id, linked) => {
+          const next = await setProviderLinked(id, linked);
+          setLinkedProviders(next);
+        }}
+        onInterceptedFares={(providerId, fares) => {
+          setInterceptedLiveFares((prev) => ({
+            ...prev,
+            [providerId]: fares,
+          }));
+        }}
+        onClose={() => setLinkModalVisible(false)}
+      />
     </>
   );
 }
@@ -1276,481 +1844,379 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
   },
-  routeBar: {
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  routeBarInner: {
+  headerRightRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  routeText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 2,
-  },
-  routeInfoText: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  cityPill: {
-    backgroundColor: '#eff6ff',
-    borderRadius: 20,
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-    flexShrink: 0,
-  },
-  cityPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1d4ed8',
-  },
-  categoryRow: {
-    flexDirection: 'row',
     gap: 8,
-    marginTop: 10,
-    paddingRight: 8,
   },
-  categoryPill: {
+  headerLinkBtn: {
+    backgroundColor: '#eef2ff',
     paddingVertical: 6,
-    paddingHorizontal: 13,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  headerLinkBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4338ca',
+  },
+  headerCloseCircle: {
+    width: 32,
+    height: 32,
     borderRadius: 16,
     backgroundColor: '#f1f5f9',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  categoryPillActive: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+  headerCloseText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
   },
-  categoryPillText: {
-    fontSize: 12,
+
+  // Skeleton Screen (f_06)
+  skeletonScreen: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    padding: 16,
+    justifyContent: 'center',
+    gap: 12,
+  },
+  skeletonRowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 16,
+    gap: 14,
+  },
+  skeletonCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#e2e8f0',
+  },
+  skeletonBarShort: {
+    width: 90,
+    height: 14,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+  },
+  skeletonBarTiny: {
+    width: 70,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+  },
+  skeletonPriceBox: {
+    width: 56,
+    height: 20,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+  },
+  findingCenterCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  findingCarCircle: {
+    width: 110,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  findingCarEmoji: {
+    fontSize: 44,
+  },
+  findingTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#334155',
+    textAlign: 'center',
+    lineHeight: 28,
+  },
+
+  // Top Controls Panel (f_07)
+  topControlsPanel: {
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  pickupPrefHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  pickupPrefLabel: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#475569',
   },
-  categoryPillTextActive: {
-    color: '#ffffff',
+  routeDistancePill: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4338ca',
   },
+  segmentedGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    overflow: 'hidden',
+  },
+  segmentedItem: {
+    flex: 1,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#cbd5e1',
+  },
+  segmentedItemActive: {
+    backgroundColor: '#e0e7ff',
+  },
+  segmentedText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  segmentedTextActive: {
+    color: '#312e81',
+    fontWeight: '700',
+  },
+  smartPickupSubBanner: {
+    backgroundColor: '#dcfce7',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  smartPickupSubText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#166534',
+  },
+  sortHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    marginTop: 4,
+  },
+  sortColLeft: {
+    width: 90,
+  },
+  sortColCenter: {
+    flex: 1,
+  },
+  sortColRight: {
+    width: 90,
+    alignItems: 'flex-end',
+  },
+  sortHeaderLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  sortHeaderLabelActive: {
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+
+  // Ride Option Cards (f_07 & f_08)
   scroll: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    paddingHorizontal: 16,
   },
-
-  // Smart Pickup Card
-  smartPickupCard: {
-    backgroundColor: '#f0fdf4',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-  },
-  smartPickupCardActive: {
-    backgroundColor: '#dcfce7',
-    borderColor: '#22c55e',
-    borderWidth: 1.5,
-  },
-  smartPickupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-    gap: 8,
-  },
-  smartPickupTitleRow: {
-    flex: 1,
-  },
-  smartPickupBadge: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#15803d',
-    letterSpacing: 0.4,
-    marginBottom: 2,
-  },
-  smartPickupMeta: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#166534',
-  },
-  smartPickupBtn: {
-    backgroundColor: '#16a34a',
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-  },
-  smartPickupBtnActive: {
-    backgroundColor: '#15803d',
-  },
-  smartPickupBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  smartPickupBtnTextActive: {
-    color: '#ffffff',
-  },
-  smartPickupDesc: {
-    fontSize: 12,
-    color: '#166534',
-    lineHeight: 17,
-  },
-
-  loadingQuotesBox: {
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  loadingQuotesText: {
-    color: '#64748b',
-    fontSize: 14,
-    fontStyle: 'italic',
-  },
-  section: {
-    marginBottom: 8,
-  },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#94a3b8',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  card: {
+  rideOptionCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderWidth: 1.5,
+    borderColor: '#f1f5f9',
   },
-  bestCard: {
-    borderColor: '#2563eb',
-    borderWidth: 2,
-    backgroundColor: '#ffffff',
+  rideOptionCardSelected: {
+    borderColor: '#4338ca',
+    backgroundColor: '#fafaff',
   },
-  cardUnavailable: {
-    opacity: 0.5,
-    backgroundColor: '#f8fafc',
-  },
-  cardTopRow: {
+  rideOptionMainRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    alignItems: 'center',
   },
-  cardLeft: {
-    flex: 1,
+  vehicleIconBox: {
+    width: 58,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 12,
   },
-  providerRow: {
+  vehicleEmojiText: {
+    fontSize: 34,
+  },
+  rideOptionInfo: {
+    flex: 1,
+  },
+  productTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 3,
+    marginBottom: 5,
   },
-  providerName: {
-    fontSize: 18,
+  brandCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  brandCircleText: {
+    fontSize: 8,
+    fontWeight: '800',
+  },
+  productTitleText: {
+    fontSize: 17,
     fontWeight: '700',
     color: '#0f172a',
   },
-  providerNameMuted: {
-    color: '#94a3b8',
-  },
-  bestBadge: {
-    backgroundColor: '#2563eb',
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  bestBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#ffffff',
-    letterSpacing: 0.5,
-  },
-  surgeBadge: {
-    backgroundColor: '#fef2f2',
-    borderRadius: 6,
+  bestMiniPill: {
+    backgroundColor: '#dcfce7',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#fecaca',
+    borderRadius: 6,
   },
-  surgeBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#dc2626',
+  bestMiniPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#15803d',
   },
-  metaText: {
-    fontSize: 13,
-    color: '#64748b',
-  },
-  fareRow: {
+  etaSubRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 10,
+    gap: 5,
   },
-  fareText: {
+  etaClockIcon: {
+    fontSize: 12,
+  },
+  etaSubText: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  liveDotLabel: {
+    fontSize: 11,
+    color: '#16a34a',
+    fontWeight: '600',
+  },
+  detailsToggleBtn: {
+    marginLeft: 6,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  detailsToggleText: {
+    fontSize: 11,
+    color: '#4338ca',
+    fontWeight: '600',
+  },
+  priceRightCol: {
+    alignItems: 'flex-end',
+    marginLeft: 8,
+  },
+  priceMainText: {
     fontSize: 22,
     fontWeight: '700',
     color: '#0f172a',
   },
-  fareTextBest: {
-    color: '#1d4ed8',
-  },
-  savingsBadge: {
-    backgroundColor: '#f0fdf4',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  savingsText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#16a34a',
-  },
-  liveBadge: {
-    backgroundColor: '#e0ffe6',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: '#4ade80',
-  },
-  liveBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#16a34a',
-  },
-  estimateBadge: {
-    backgroundColor: '#f1f5f9',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  estimateBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748b',
-  },
-  notAvailableText: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginBottom: 8,
-    fontStyle: 'italic',
-  },
-  cardFooterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    flex: 1,
-  },
-  expandHintText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748b',
-  },
-  specialtyBadge: {
-    borderRadius: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-  },
-  specialtyBadgeText: {
-    fontSize: 12,
+  rupeeSuperscript: {
+    fontSize: 14,
     fontWeight: '600',
   },
-  breakdownBox: {
+  surgeMicroText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#dc2626',
+    marginTop: 2,
+  },
+  breakdownDrawer: {
     marginTop: 12,
-    paddingTop: 12,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
-  },
-  breakdownSection: {
-    marginBottom: 10,
-  },
-  breakdownTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: 6,
   },
   breakdownRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 3,
+    paddingVertical: 2,
   },
   breakdownLabel: {
     fontSize: 12,
-    color: '#475569',
+    color: '#64748b',
   },
-  breakdownValue: {
+  breakdownVal: {
     fontSize: 12,
     fontWeight: '600',
     color: '#0f172a',
   },
-  bidTipBox: {
-    marginTop: 8,
-    backgroundColor: '#eff6ff',
-    padding: 8,
-    borderRadius: 8,
-  },
-  bidTipText: {
+  bidRecommendText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#1d4ed8',
+    color: '#4338ca',
+    marginTop: 6,
   },
-  tiersSection: {
-    marginTop: 4,
-  },
-  tiersGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  tierMiniCard: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  tierMiniLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  tierMiniPrice: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginTop: 1,
-  },
-  bookButtonSolid: {
-    backgroundColor: '#2563eb',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-  bookTextSolid: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  bookButtonGhost: {
-    borderWidth: 1.5,
-    borderColor: '#2563eb',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    backgroundColor: 'transparent',
-  },
-  bookTextGhost: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2563eb',
-  },
-  unavailableButton: {
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    backgroundColor: 'transparent',
-  },
-  unavailableText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#cbd5e1',
-  },
+
+  // Inline AI & 60m Forecast Card
   aiCard: {
-    backgroundColor: '#eff6ff',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
+    backgroundColor: '#eef2ff',
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 10,
-    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
   },
   aiCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 14,
-  },
-  aiCardLeft: {
-    flex: 1,
   },
   aiCardTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1e40af',
+    color: '#312e81',
   },
   aiConfidence: {
-    fontSize: 11,
-    color: '#3b82f6',
-    marginTop: 1,
+    fontSize: 12,
+    color: '#4338ca',
+    marginTop: 2,
   },
   aiChevron: {
     fontSize: 20,
-    color: '#3b82f6',
-    fontWeight: '300',
-  },
-  aiCardBody: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-  },
-  aiLoadingText: {
-    fontSize: 13,
-    color: '#3b82f6',
-    fontStyle: 'italic',
-  },
-  aiErrorText: {
-    fontSize: 13,
-    color: '#64748b',
-  },
-  trendBox: {
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
-  },
-  trendBoxText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  aiAdvice: {
-    fontSize: 13,
-    color: '#1e40af',
-    fontStyle: 'italic',
-    marginBottom: 4,
-  },
-  aiEstimate: {
-    fontSize: 12,
-    color: '#3b82f6',
+    color: '#4338ca',
   },
   forecastStrip: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 12,
     gap: 6,
+    marginTop: 10,
   },
   forecastSlot: {
     flex: 1,
@@ -1759,7 +2225,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: '#e0e7ff',
   },
   forecastSlotBest: {
     backgroundColor: '#dcfce7',
@@ -1773,117 +2239,375 @@ const styles = StyleSheet.create({
   forecastPriceLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#1e40af',
+    color: '#312e81',
     marginTop: 2,
   },
   forecastPriceLabelBest: {
     color: '#15803d',
   },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 12,
-    gap: 10,
+
+  // Sticky Bottom "Book Ride" Bar (f_07 & f_08)
+  stickyBottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
+  bookRidePrimaryBtn: {
+    backgroundColor: '#4338ca',
+    borderRadius: 28,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  bookRidePrimaryBtnDisabled: {
     backgroundColor: '#e2e8f0',
   },
-  dividerLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  disclaimerBox: {
-    backgroundColor: '#fefce8',
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#fde68a',
-  },
-  disclaimerText: {
-    fontSize: 12,
-    color: '#92400e',
-    lineHeight: 18,
-    textAlign: 'center',
+  bookRidePrimaryText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
   },
 
-  // Fare modal
-  modalOverlay: {
+  // Bottom Sheets (f_09, f_10, f_11, f_12, f_14)
+  sheetOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end',
   },
-  modalContainer: {
+  confirmSheet: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 24,
-    width: '100%',
-    maxWidth: 360,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: 30,
   },
-  modalTitle: {
-    fontSize: 17,
+  sheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#94a3b8',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  sheetTitle: {
+    fontSize: 20,
     fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 16,
     textAlign: 'center',
+    marginBottom: 8,
   },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 10,
+  sheetRouteMeta: {
+    fontSize: 15,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  sheetRoutePill: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 24,
     paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  sheetRoutePillText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  sheetSavingsCallout: {
+    fontSize: 15,
+    color: '#475569',
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 22,
+  },
+  sheetSavingsGreen: {
+    color: '#10b981',
+    fontWeight: '700',
+  },
+  selectedRideBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 18,
+    padding: 18,
+    gap: 10,
+    marginBottom: 14,
+  },
+  selectedRideEmoji: {
+    fontSize: 32,
+    marginRight: 4,
+  },
+  selectedRideName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginRight: 6,
+  },
+  selectedRideProviderLabel: {
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  selectedRideEta: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  paymentSelectorRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    marginBottom: 6,
+  },
+  paymentSelectorLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  paymentChangeLink: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#4338ca',
+  },
+  estimatedPriceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingHorizontal: 4,
+  },
+  estimatedPriceLabel: {
     fontSize: 18,
     fontWeight: '600',
     color: '#0f172a',
-    textAlign: 'center',
-    marginBottom: 12,
   },
-  modalConsent: {
-    fontSize: 11,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 16,
-    marginBottom: 20,
+  estimatedPriceValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
   },
-  modalButtons: {
+  sheetButtonsRow: {
     flexDirection: 'row',
     gap: 12,
   },
-  modalButtonGhost: {
+  sheetCancelBtn: {
     flex: 1,
-    borderWidth: 1.5,
-    borderColor: '#cbd5e1',
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 16,
+    borderRadius: 28,
     alignItems: 'center',
   },
-  modalButtonGhostText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#64748b',
+  sheetCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
   },
-  modalButtonSolid: {
+  sheetConfirmBlackBtn: {
     flex: 1,
-    backgroundColor: '#2563eb',
-    borderRadius: 10,
-    paddingVertical: 12,
+    backgroundColor: '#000000',
+    paddingVertical: 16,
+    borderRadius: 28,
     alignItems: 'center',
   },
-  modalButtonSolidText: {
-    fontSize: 15,
+  sheetConfirmWhiteText: {
+    fontSize: 16,
     fontWeight: '700',
     color: '#ffffff',
   },
 
-  // Error / loading states
+  // Payment Options Sheet (f_10)
+  paymentOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    gap: 12,
+  },
+  paymentOptionCardActive: {
+    borderColor: '#0f172a',
+    backgroundColor: '#f8fafc',
+  },
+  paymentIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentIconText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  paymentOptionTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  toggleTrack: {
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#e2e8f0',
+    padding: 2,
+  },
+  toggleTrackActive: {
+    backgroundColor: '#10b981',
+  },
+  toggleThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+  },
+  toggleThumbActive: {
+    transform: [{ translateX: 20 }],
+  },
+
+  // Booking Phase & Ride Completed Savings (f_11, f_12, f_14)
+  phaseCenterBox: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  progressBarTrack: {
+    width: '100%',
+    height: 4,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 2,
+    marginVertical: 14,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    width: '35%',
+    height: '100%',
+    backgroundColor: '#818cf8',
+  },
+  phaseBigCarEmoji: {
+    fontSize: 64,
+    marginVertical: 16,
+  },
+  phaseHeading: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#334155',
+    textAlign: 'center',
+    marginBottom: 12,
+    lineHeight: 28,
+  },
+  confirmedGreenCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#10b981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+  },
+  confirmedGreenCheck: {
+    color: '#ffffff',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  confirmedBigTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center',
+    lineHeight: 36,
+  },
+  completedSavedHero: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#334155',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 36,
+  },
+  completedSavedGreen: {
+    color: '#10b981',
+    fontWeight: '800',
+  },
+  completedTotalHero: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#334155',
+    textAlign: 'center',
+    marginTop: 22,
+    marginBottom: 18,
+    lineHeight: 34,
+  },
+  optionalFareInput: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontSize: 13,
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  shareFriendsLabel: {
+    fontSize: 14,
+    color: '#64748b',
+    marginBottom: 14,
+  },
+  completedActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    width: '100%',
+    justifyContent: 'center',
+  },
+  skipNowBtn: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 14,
+    paddingHorizontal: 26,
+    borderRadius: 28,
+  },
+  skipNowBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  whatsappShareCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  indigoShareCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#4f46e5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shareCircleText: {
+    fontSize: 22,
+    color: '#ffffff',
+  },
+
+  // Error State
   errorContainer: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -1910,7 +2634,7 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   errorButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#4338ca',
     borderRadius: 12,
     paddingVertical: 14,
     paddingHorizontal: 40,

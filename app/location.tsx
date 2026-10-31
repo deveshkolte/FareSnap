@@ -13,6 +13,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { ConfirmPickupMapModal } from '../components/ConfirmPickupMapModal';
+import { LinkAppsModal } from '../components/LinkAppsModal';
+import {
+  getLinkedProviders,
+  LinkableProviderId,
+  setProviderLinked,
+} from '../utils/liveSessionBridge';
 
 type LocationData = {
   lat?: number;
@@ -86,6 +93,18 @@ export default function LocationScreen() {
   const [dropSuggestions, setDropSuggestions] = useState<Suggestion[]>([]);
   const [activeField, setActiveField] = useState<'pickup' | 'drop' | null>(null);
 
+  // BuyHatke modals: Confirm Pickup Map (f_05) & Link Apps (f_01)
+  const [confirmMapVisible, setConfirmMapVisible] = useState(false);
+  const [linkModalVisible, setLinkModalVisible] = useState(false);
+  const [linkedProviders, setLinkedProviders] = useState<
+    Record<LinkableProviderId, boolean>
+  >({
+    uber: true,
+    rapido: true,
+    ola: false,
+    namma_yatri: false,
+  });
+
   const pickupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickupAbortRef = useRef<AbortController | null>(null);
@@ -93,6 +112,7 @@ export default function LocationScreen() {
 
   useEffect(() => {
     loadHistory();
+    getLinkedProviders().then(setLinkedProviders).catch(() => {});
     return () => {
       if (pickupTimer.current) clearTimeout(pickupTimer.current);
       if (dropTimer.current) clearTimeout(dropTimer.current);
@@ -241,15 +261,21 @@ export default function LocationScreen() {
       let addressString = '';
 
       try {
-        const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const [address] = await Location.reverseGeocodeAsync({
+          latitude,
+          longitude,
+        });
         if (address) {
-          addressString = [address.name, address.street, address.city, address.region]
+          addressString = [
+            address.name,
+            address.street,
+            address.city,
+            address.region,
+          ]
             .filter(Boolean)
             .join(', ');
         }
-      } catch {
-        // Fallback to Photon reverse geocode below
-      }
+      } catch {}
 
       if (!addressString) {
         try {
@@ -259,17 +285,19 @@ export default function LocationScreen() {
           const data = await res.json();
           const p = data?.features?.[0]?.properties;
           if (p) {
-            addressString = [p.name, p.street, p.city, p.state].filter(Boolean).join(', ');
+            addressString = [p.name, p.street, p.city, p.state]
+              .filter(Boolean)
+              .join(', ');
           }
-        } catch {
-          // Use coordinate label fallback
-        }
+        } catch {}
       }
 
       setPickup({
         lat: latitude,
         lng: longitude,
-        address: addressString || `Current Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
+        address:
+          addressString ||
+          `Current Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
       });
       setPickupSuggestions([]);
     } catch {
@@ -279,11 +307,14 @@ export default function LocationScreen() {
     }
   };
 
-  const handleCompare = async () => {
+  const handleComparePress = async () => {
     const cleanPickup = pickup.address.trim();
     const cleanDrop = drop.address.trim();
     if (!cleanPickup || !cleanDrop) {
-      Alert.alert('Missing locations', 'Please enter both pickup and drop locations.');
+      Alert.alert(
+        'Missing locations',
+        'Please enter both pickup and drop locations.'
+      );
       return;
     }
     const sameCoords =
@@ -295,20 +326,57 @@ export default function LocationScreen() {
       Math.abs(pickup.lng - drop.lng) < 0.0005;
 
     if (cleanPickup.toLowerCase() === cleanDrop.toLowerCase() || sameCoords) {
-      Alert.alert('Invalid route', 'Pickup and drop locations cannot be the same.');
+      Alert.alert(
+        'Invalid route',
+        'Pickup and drop locations cannot be the same.'
+      );
       return;
     }
 
     setComparing(true);
-    await saveToHistory(pickup, drop);
+    try {
+      let resolvedPickup = { ...pickup };
+      if (
+        typeof resolvedPickup.lat !== 'number' ||
+        typeof resolvedPickup.lng !== 'number'
+      ) {
+        const suggestions = await fetchSuggestions(cleanPickup);
+        if (suggestions.length > 0) {
+          resolvedPickup = {
+            address: cleanPickup,
+            lat: suggestions[0].lat,
+            lng: suggestions[0].lng,
+          };
+          setPickup(resolvedPickup);
+        }
+      }
+
+      if (
+        typeof resolvedPickup.lat === 'number' &&
+        typeof resolvedPickup.lng === 'number'
+      ) {
+        setConfirmMapVisible(true);
+      } else {
+        await proceedToResults(resolvedPickup, drop);
+      }
+    } finally {
+      setComparing(false);
+    }
+  };
+
+  const proceedToResults = async (
+    finalPickup: LocationData,
+    finalDrop: LocationData
+  ) => {
+    setConfirmMapVisible(false);
+    await saveToHistory(finalPickup, finalDrop);
     router.push({
       pathname: '/results',
       params: {
-        pickup: JSON.stringify(pickup),
-        destination: JSON.stringify(drop),
+        pickup: JSON.stringify(finalPickup),
+        destination: JSON.stringify(finalDrop),
       },
     });
-    setComparing(false);
   };
 
   const timeAgo = (timestamp: number) => {
@@ -321,16 +389,29 @@ export default function LocationScreen() {
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
+  const linkedCount = Object.values(linkedProviders).filter(Boolean).length;
+  const bothFilled =
+    pickup.address.trim().length > 0 && drop.address.trim().length > 0;
+
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       <Stack.Screen
         options={{
-          title: 'Enter locations',
+          title: 'Ride Details',
           headerStyle: { backgroundColor: '#ffffff' },
           headerTitleStyle: { color: '#0f172a', fontWeight: '700' },
-          headerTintColor: '#2563eb',
+          headerTintColor: '#0f172a',
           headerShadowVisible: false,
+          headerRight: () => (
+            <TouchableOpacity
+              style={styles.headerPulseBtn}
+              onPress={() => setLinkModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.headerPulseIcon}>🔌 {linkedCount}/4</Text>
+            </TouchableOpacity>
+          ),
         }}
       />
       <ScrollView
@@ -339,16 +420,18 @@ export default function LocationScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Route card — pickup + drop + swap */}
+        {/* BuyHatke-style Route Card (f_02 - f_04) */}
         <View style={styles.routeCard}>
           {/* Pickup row */}
           <View style={styles.inputRow}>
             <View style={styles.dotIndicatorGreen} />
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Pickup</Text>
               <View style={styles.inputFieldRow}>
                 <TextInput
-                  style={styles.input}
+                  style={[
+                    styles.input,
+                    activeField === 'pickup' && styles.inputFocused,
+                  ]}
                   placeholder="Where from?"
                   placeholderTextColor="#94a3b8"
                   value={pickup.address}
@@ -357,13 +440,13 @@ export default function LocationScreen() {
                 />
                 {pickup.address.length > 0 && (
                   <TouchableOpacity
-                    style={styles.clearInputBtn}
+                    style={styles.clearCircleBtn}
                     onPress={() => {
                       setPickup({ address: '' });
                       setPickupSuggestions([]);
                     }}
                   >
-                    <Text style={styles.clearInputText}>✕</Text>
+                    <Text style={styles.clearCircleText}>✕</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -385,12 +468,14 @@ export default function LocationScreen() {
 
           {/* Drop row */}
           <View style={styles.inputRow}>
-            <View style={styles.dotIndicatorBlue} />
+            <View style={styles.dotIndicatorRed} />
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Drop</Text>
               <View style={styles.inputFieldRow}>
                 <TextInput
-                  style={styles.input}
+                  style={[
+                    styles.input,
+                    activeField === 'drop' && styles.inputFocused,
+                  ]}
                   placeholder="Where to?"
                   placeholderTextColor="#94a3b8"
                   value={drop.address}
@@ -399,13 +484,13 @@ export default function LocationScreen() {
                 />
                 {drop.address.length > 0 && (
                   <TouchableOpacity
-                    style={styles.clearInputBtn}
+                    style={styles.clearCircleBtn}
                     onPress={() => {
                       setDrop({ address: '' });
                       setDropSuggestions([]);
                     }}
                   >
-                    <Text style={styles.clearInputText}>✕</Text>
+                    <Text style={styles.clearCircleText}>✕</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -426,7 +511,9 @@ export default function LocationScreen() {
                 onPress={() => selectPickup(s)}
               >
                 <Text style={styles.suggestionName}>📍 {s.name}</Text>
-                <Text style={styles.suggestionFull} numberOfLines={1}>{s.full}</Text>
+                <Text style={styles.suggestionFull} numberOfLines={1}>
+                  {s.full}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -445,7 +532,9 @@ export default function LocationScreen() {
                 onPress={() => selectDrop(s)}
               >
                 <Text style={styles.suggestionName}>📍 {s.name}</Text>
-                <Text style={styles.suggestionFull} numberOfLines={1}>{s.full}</Text>
+                <Text style={styles.suggestionFull} numberOfLines={1}>
+                  {s.full}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -462,13 +551,23 @@ export default function LocationScreen() {
           <Text style={styles.currentLocationText}>
             {loading ? 'Getting location...' : 'Use my current location'}
           </Text>
-          {loading && <ActivityIndicator size="small" color="#2563eb" style={{ marginLeft: 8 }} />}
+          {loading && (
+            <ActivityIndicator
+              size="small"
+              color="#4338ca"
+              style={{ marginLeft: 8 }}
+            />
+          )}
         </TouchableOpacity>
 
         {/* Quick Destination Hubs */}
         <View style={styles.hubsSection}>
           <Text style={styles.historyTitle}>Quick fill</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginTop: 8 }}
+          >
             {POPULAR_HUBS.map((hub) => (
               <TouchableOpacity
                 key={hub.label}
@@ -502,7 +601,8 @@ export default function LocationScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.chipText} numberOfLines={1}>
-                    {entry.pickup.split(',')[0]} → {entry.destination.split(',')[0]}
+                    {entry.pickup.split(',')[0]} →{' '}
+                    {entry.destination.split(',')[0]}
                   </Text>
                   <Text style={styles.chipTime}>{timeAgo(entry.timestamp)}</Text>
                 </TouchableOpacity>
@@ -511,33 +611,60 @@ export default function LocationScreen() {
           </View>
         )}
 
-        {/* Compare button */}
+        {/* Compare Fares button (matches BuyHatke f_02 / f_04) */}
         <TouchableOpacity
-          style={[styles.compareButton, comparing && styles.compareButtonDisabled]}
-          onPress={handleCompare}
+          style={[
+            styles.compareButton,
+            !bothFilled && styles.compareButtonInactive,
+            comparing && styles.compareButtonDisabled,
+          ]}
+          onPress={handleComparePress}
           disabled={comparing}
           activeOpacity={0.85}
         >
           {comparing ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.compareText}>Compare rides →</Text>
+            <Text
+              style={[
+                styles.compareText,
+                !bothFilled && styles.compareTextInactive,
+              ]}
+            >
+              Compare Fares
+            </Text>
           )}
         </TouchableOpacity>
-
-        {/* BuyHatke-style Trust Strip */}
-        <View style={styles.trustRow}>
-          <View style={styles.trustBadge}>
-            <Text style={styles.trustBadgeText}>✓ Avg 20%+ savings</Text>
-          </View>
-          <View style={styles.trustBadge}>
-            <Text style={styles.trustBadgeText}>✓ Smart Pickup</Text>
-          </View>
-          <View style={styles.trustBadge}>
-            <Text style={styles.trustBadgeText}>✓ No Login Storage</Text>
-          </View>
-        </View>
       </ScrollView>
+
+      {/* BuyHatke Confirm Pickup Interactive Map Modal (f_05) */}
+      <ConfirmPickupMapModal
+        visible={confirmMapVisible}
+        initialLat={pickup.lat ?? 12.9352}
+        initialLng={pickup.lng ?? 77.6245}
+        initialAddress={pickup.address}
+        onCancel={() => setConfirmMapVisible(false)}
+        onConfirm={(confirmed) => {
+          const updatedPickup: LocationData = {
+            address: confirmed.address,
+            lat: confirmed.lat,
+            lng: confirmed.lng,
+          };
+          setPickup(updatedPickup);
+          proceedToResults(updatedPickup, drop);
+        }}
+      />
+
+      {/* BuyHatke Link Apps Modal (f_01) */}
+      <LinkAppsModal
+        visible={linkModalVisible}
+        linkedMap={linkedProviders}
+        onToggleLink={async (id, linked) => {
+          const next = await setProviderLinked(id, linked);
+          setLinkedProviders(next);
+        }}
+        onClose={() => setLinkModalVisible(false)}
+      />
     </>
   );
 }
@@ -545,41 +672,51 @@ export default function LocationScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
   },
   content: {
     padding: 16,
     paddingBottom: 48,
   },
-
-  // Route card
-  routeCard: {
-    backgroundColor: '#ffffff',
+  headerPulseBtn: {
+    backgroundColor: '#eef2ff',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 16,
-    padding: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginBottom: 12,
+    borderColor: '#c7d2fe',
+  },
+  headerPulseIcon: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4338ca',
+  },
+
+  // BuyHatke Route Card
+  routeCard: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 14,
   },
   inputRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
   },
   dotIndicatorGreen: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#22c55e',
-    marginTop: 22,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10b981',
     flexShrink: 0,
   },
-  dotIndicatorBlue: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#2563eb',
-    marginTop: 22,
+  dotIndicatorRed: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ef4444',
     flexShrink: 0,
   },
   connectorRow: {
@@ -588,15 +725,15 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
   connectorLine: {
-    width: 2,
-    height: 20,
-    backgroundColor: '#cbd5e1',
-    marginLeft: 5,
+    width: 1.5,
+    height: 24,
+    backgroundColor: '#94a3b8',
+    marginLeft: 4,
   },
   dividerLineHorizontal: {
     flex: 1,
     height: 1,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#e2e8f0',
     marginLeft: 18,
     marginRight: 8,
   },
@@ -604,56 +741,63 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#cbd5e1',
     alignItems: 'center',
     justifyContent: 'center',
   },
   swapButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
-    color: '#2563eb',
+    color: '#475569',
   },
   inputWrapper: {
     flex: 1,
   },
-  inputLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
   inputFieldRow: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  input: {
-    flex: 1,
-    fontSize: 15,
-    color: '#0f172a',
-    fontWeight: '500',
-    paddingVertical: 4,
-  },
-  clearInputBtn: {
+    backgroundColor: 'transparent',
+    borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  clearInputText: {
-    fontSize: 13,
-    color: '#94a3b8',
+  input: {
+    flex: 1,
+    fontSize: 16,
+    color: '#0f172a',
+    fontWeight: '500',
+    paddingVertical: 6,
+  },
+  inputFocused: {
+    backgroundColor: '#e0e7ff',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+  },
+  clearCircleBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#64748b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+  clearCircleText: {
+    fontSize: 11,
+    color: '#64748b',
     fontWeight: '700',
   },
 
   // Suggestions
   suggestionsCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    marginBottom: 12,
+    marginBottom: 14,
     overflow: 'hidden',
   },
   suggestionItem: {
@@ -678,12 +822,12 @@ const styles = StyleSheet.create({
   currentLocationButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#eff6ff',
-    borderRadius: 12,
+    backgroundColor: '#eef2ff',
+    borderRadius: 14,
     padding: 14,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#c7d2fe',
     gap: 8,
   },
   currentLocationIcon: {
@@ -692,7 +836,7 @@ const styles = StyleSheet.create({
   currentLocationText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1d4ed8',
+    color: '#4338ca',
     flex: 1,
   },
 
@@ -701,7 +845,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   hubPill: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fafc',
     borderRadius: 20,
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -738,7 +882,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   chip: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fafc',
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
@@ -758,10 +902,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   compareButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 14,
+    backgroundColor: '#4338ca',
+    borderRadius: 28,
     paddingVertical: 16,
     alignItems: 'center',
+    marginTop: 8,
+  },
+  compareButtonInactive: {
+    backgroundColor: '#e2e8f0',
   },
   compareButtonDisabled: {
     opacity: 0.6,
@@ -771,22 +919,7 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
   },
-  trustRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 12,
-    marginTop: 20,
-  },
-  trustBadge: {
-    backgroundColor: '#f1f5f9',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-  trustBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#475569',
+  compareTextInactive: {
+    color: '#94a3b8',
   },
 });
