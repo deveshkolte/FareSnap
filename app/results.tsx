@@ -16,7 +16,8 @@ import {
 } from 'react-native';
 import { LinkAppsModal } from '../components/LinkAppsModal';
 import { LiveFareScraperPool } from '../components/LiveFareScraperPool';
-import { openRideApp } from '../utils/appUrls';
+import { RoutePreviewMapModal } from '../components/RoutePreviewMapModal';
+import { openRideApp, openWalkingDirections } from '../utils/appUrls';
 import { CityKey, detectCity } from '../utils/cityDetector';
 import { getRoadDistance, RouteCoords } from '../utils/distanceEngine';
 import {
@@ -47,7 +48,10 @@ import {
   computeSmartPickup,
   SmartPickupSuggestion,
 } from '../utils/smartPickupEngine';
-import { fetchNammaYatriLiveFares } from '../utils/nammaYatriDirectApi';
+import {
+  bookNammaYatriEstimate,
+  fetchNammaYatriLiveFares,
+} from '../utils/nammaYatriDirectApi';
 import {
   fetchLiveWeatherSurge,
   LiveWeatherSurgeInfo,
@@ -84,6 +88,7 @@ type FlatRideOption = {
   highPrice: number;
   isSurge: boolean;
   sourceKind: QuoteSourceKind;
+  estimateId?: string;
   breakdown: FareBreakdown;
 };
 
@@ -601,6 +606,10 @@ export default function ResultsScreen() {
     null
   );
   const [smartPickupEnabled, setSmartPickupEnabled] = useState(false);
+  const [routeMapModalVisible, setRouteMapModalVisible] = useState(false);
+  const [surgeTimerSeconds, setSurgeTimerSeconds] = useState<number | null>(
+    null
+  );
 
   // Linked Providers & Real Scraped Live Products from WebView Pool
   const [linkModalVisible, setLinkModalVisible] = useState(false);
@@ -908,6 +917,7 @@ export default function ResultsScreen() {
           ? Math.max(2, item.baseEta - 1)
           : item.baseEta;
       let sourceKind: QuoteSourceKind = 'estimated';
+      let estimateId: string | undefined;
 
       // Apply Waze-style neighborhood surge multiplier if reported by recent riders
       const areaMult = areaSurgeMultipliers[item.providerName];
@@ -962,6 +972,7 @@ export default function ResultsScreen() {
           if (matchedLive.etaMinutes !== null) {
             etaMinutes = matchedLive.etaMinutes;
           }
+          estimateId = matchedLive.estimateId;
           sourceKind = 'live_scraped';
         }
       }
@@ -981,6 +992,7 @@ export default function ResultsScreen() {
         highPrice,
         isSurge: est.isSurge,
         sourceKind,
+        estimateId,
         breakdown: est.breakdown,
       });
     }
@@ -1172,6 +1184,21 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     return () => subscription.remove();
   }, []);
 
+  // Countdown timer for "Wait 15m to Save" surge drop alert
+  useEffect(() => {
+    if (surgeTimerSeconds === null) return;
+    if (surgeTimerSeconds <= 0) {
+      setSurgeTimerSeconds(null);
+      return;
+    }
+    const timer = setInterval(() => {
+      setSurgeTimerSeconds((prev) =>
+        prev !== null && prev > 0 ? prev - 1 : null
+      );
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [surgeTimerSeconds]);
+
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -1181,14 +1208,48 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     }
   };
 
-  // Launch either In-WebView Authenticated Session Checkout OR Native Deep Link
-  const handleConfirmRideBooking = async (mode: 'native_app' | 'in_app_webview') => {
+  // Launch either In-WebView Authenticated Session Checkout, Direct Namma Yatri API, OR Native Deep Link
+  const handleConfirmRideBooking = async (
+    mode: 'native_app' | 'in_app_webview'
+  ) => {
     if (!selectedRide) return;
 
     setConfirmRideSheetVisible(false);
 
+    const tripMeta = {
+      pickup:
+        smartPickupEnabled && smartPickup
+          ? smartPickup.pickupLabel
+          : pickup.address,
+      destination: destination.address,
+      providerName: selectedRide.providerName,
+      productName: selectedRide.productName,
+      category: selectedRide.category,
+      distanceKm: activeDistanceKm,
+      pricePaid: selectedRide.price,
+    };
+
     if (mode === 'in_app_webview' && selectedRide.linkId) {
-      const updatedSavings = await recordTripSavings(savingsVsUberXl);
+      // If Namma Yatri has a live estimateId from api.moving.tech, trigger direct select2 booking
+      if (
+        selectedRide.linkId === 'namma_yatri' &&
+        selectedRide.estimateId
+      ) {
+        setBookingPhase('finding');
+        const updatedSavings = await recordTripSavings(
+          savingsVsUberXl,
+          tripMeta
+        );
+        setLifetimeSavings(updatedSavings);
+        const nyBooked = await bookNammaYatriEstimate(selectedRide.estimateId);
+        if (nyBooked.booked) {
+          setBookingPhase('confirmed');
+          setTimeout(() => setBookingPhase('completed'), 1800);
+          return;
+        }
+      }
+
+      const updatedSavings = await recordTripSavings(savingsVsUberXl, tripMeta);
       setLifetimeSavings(updatedSavings);
       setLinkModalInitialProvider(selectedRide.linkId);
       setLinkModalAutoBookProduct(selectedRide.productName);
@@ -1197,7 +1258,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     }
 
     setBookingPhase('finding');
-    const updatedSavings = await recordTripSavings(savingsVsUberXl);
+    const updatedSavings = await recordTripSavings(savingsVsUberXl, tripMeta);
     setLifetimeSavings(updatedSavings);
 
     setTimeout(() => {
@@ -1423,11 +1484,16 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         <View style={styles.topControlsPanel}>
           <View style={styles.pickupPrefHeaderRow}>
             <Text style={styles.pickupPrefLabel}>Pickup Preference</Text>
-            <Text style={styles.routeDistancePill}>
-              📍 {cityLabel} · {activeDistanceKm} km (~{activeDurationMin}m
-              {intersectionCount > 0 ? ` · ${intersectionCount} signals` : ''})
-              {liveWeather ? ` · ${liveWeather.conditionLabel}` : ''}
-            </Text>
+            <TouchableOpacity
+              onPress={() => setRouteMapModalVisible(true)}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.routeDistancePill}>
+                🗺️ {cityLabel} · {activeDistanceKm} km (~{activeDurationMin}m
+                {intersectionCount > 0 ? ` · ${intersectionCount} signals` : ''})
+                {liveWeather ? ` · ${liveWeather.conditionLabel}` : ''} ›
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Segmented Control 1: Current Location vs Smart Pickup */}
@@ -1479,6 +1545,29 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                 🚶 Walk {smartPickup.walkMeters}m ({smartPickup.walkMinutes}m · 🔥{' '}
                 {smartPickup.caloriesBurned} kcal) to {smartPickup.pickupLabel}
               </Text>
+              <View style={styles.smartPickupActionRow}>
+                <TouchableOpacity
+                  style={styles.smartMapMiniBtn}
+                  onPress={() => setRouteMapModalVisible(true)}
+                >
+                  <Text style={styles.smartMapMiniBtnText}>🗺️ View Map</Text>
+                </TouchableOpacity>
+                {resolvedPickupCoords && (
+                  <TouchableOpacity
+                    style={styles.smartMapMiniBtn}
+                    onPress={() =>
+                      openWalkingDirections(
+                        resolvedPickupCoords,
+                        smartPickup.pickupCoords
+                      )
+                    }
+                  >
+                    <Text style={styles.smartMapMiniBtnText}>
+                      🧭 Walk Directions
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           )}
 
@@ -1763,30 +1852,64 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                       </Text>
                     </View>
                     {!aiCollapsed && hourlyForecast.length > 0 && (
-                      <View style={styles.forecastStrip}>
-                        {hourlyForecast.map((pt) => (
-                          <View
-                            key={pt.label}
-                            style={[
-                              styles.forecastSlot,
-                              pt.isCheapestSlot && styles.forecastSlotBest,
-                            ]}
-                          >
-                            <Text style={styles.forecastTimeLabel}>
-                              {pt.label}
-                            </Text>
-                            <Text
+                      <>
+                        <View style={styles.forecastStrip}>
+                          {hourlyForecast.map((pt) => (
+                            <View
+                              key={pt.label}
                               style={[
-                                styles.forecastPriceLabel,
-                                pt.isCheapestSlot &&
-                                  styles.forecastPriceLabelBest,
+                                styles.forecastSlot,
+                                pt.isCheapestSlot && styles.forecastSlotBest,
                               ]}
                             >
-                              ₹{pt.estimatedFare}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
+                              <Text style={styles.forecastTimeLabel}>
+                                {pt.label}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.forecastPriceLabel,
+                                  pt.isCheapestSlot &&
+                                    styles.forecastPriceLabelBest,
+                                ]}
+                              >
+                                ₹{pt.estimatedFare}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                        {(() => {
+                          const nowFare = hourlyForecast[0]?.estimatedFare ?? 0;
+                          const minFuture = Math.min(
+                            ...hourlyForecast
+                              .slice(1)
+                              .map((p) => p.estimatedFare)
+                          );
+                          const potentialSave = Math.round(nowFare - minFuture);
+                          if (potentialSave <= 5 && surgeTimerSeconds === null) {
+                            return null;
+                          }
+                          return (
+                            <TouchableOpacity
+                              style={styles.surgeTimerBtn}
+                              onPress={() =>
+                                setSurgeTimerSeconds(
+                                  surgeTimerSeconds !== null ? null : 15 * 60
+                                )
+                              }
+                            >
+                              <Text style={styles.surgeTimerBtnText}>
+                                {surgeTimerSeconds !== null
+                                  ? `⏱️ Surge Drop Timer: ${Math.floor(
+                                      surgeTimerSeconds / 60
+                                    )}:${String(
+                                      surgeTimerSeconds % 60
+                                    ).padStart(2, '0')} remaining (Tap to stop)`
+                                  : `⏱️ Wait 15m to Save ~₹${potentialSave} (Start Surge Timer)`}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })()}
+                      </>
                     )}
                   </TouchableOpacity>
                 )}
@@ -2157,6 +2280,19 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Interactive Route & Smart Pickup Walking Map Modal */}
+      {resolvedPickupCoords && resolvedDropCoords && (
+        <RoutePreviewMapModal
+          visible={routeMapModalVisible}
+          originCoords={resolvedPickupCoords}
+          smartPickupCoords={smartPickup?.pickupCoords}
+          smartPickupLabel={smartPickup?.pickupLabel}
+          walkMeters={smartPickup?.walkMeters}
+          destCoords={resolvedDropCoords}
+          onClose={() => setRouteMapModalVisible(false)}
+        />
+      )}
+
       {/* BuyHatke Link Apps & In-WebView Booking Modal */}
       <LinkAppsModal
         visible={linkModalVisible}
@@ -2382,6 +2518,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#166534',
+  },
+  smartPickupActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  smartMapMiniBtn: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  smartMapMiniBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#15803d',
+  },
+  surgeTimerBtn: {
+    marginTop: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    alignItems: 'center',
+  },
+  surgeTimerBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4338ca',
   },
   linkBannerPrompt: {
     backgroundColor: '#eef2ff',
