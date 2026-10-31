@@ -90,6 +90,14 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref();
 
+// Self-keepalive ping every 12 minutes to prevent Render free-tier 15m cold sleep
+const SELF_PING_URL =
+  process.env.RENDER_EXTERNAL_URL ||
+  'https://faresnap-ondc-bap-gateway.onrender.com';
+setInterval(() => {
+  fetch(`${SELF_PING_URL.replace(/\/$/, '')}/health`).catch(() => {});
+}, 12 * 60 * 1000).unref();
+
 const CITY_STD_CODES = {
   bangalore: 'std:080',
   mumbai: 'std:022',
