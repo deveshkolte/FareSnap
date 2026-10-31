@@ -21,6 +21,7 @@ import {
   ScraperBridgeMessage,
 } from '../utils/liveSessionBridge';
 import {
+  getStoredNammaYatriToken,
   sendNammaYatriOtp,
   setStoredNammaYatriToken,
   verifyNammaYatriOtp,
@@ -68,6 +69,8 @@ export function LinkAppsModal({
   const [nyAuthId, setNyAuthId] = useState<string | null>(null);
   const [nyLoading, setNyLoading] = useState(false);
   const [nyError, setNyError] = useState('');
+  const [bapConnected, setBapConnected] = useState<boolean | null>(null);
+  const [hasNyToken, setHasNyToken] = useState(false);
 
   useEffect(() => {
     if (visible && initialProviderId) {
@@ -79,6 +82,18 @@ export function LinkAppsModal({
       setNyAuthId(null);
       setNyOtp('');
       setNyError('');
+    }
+
+    if (visible) {
+      getStoredNammaYatriToken()
+        .then((t) => setHasNyToken(Boolean(t)))
+        .catch(() => {});
+      const bapUrl = (
+        process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040'
+      ).replace(/\/$/, '');
+      fetch(`${bapUrl}/health`)
+        .then((r) => setBapConnected(r.ok))
+        .catch(() => setBapConnected(false));
     }
   }, [visible, initialProviderId]);
 
@@ -333,8 +348,48 @@ export function LinkAppsModal({
             <View style={styles.shieldBox}>
               <Text style={styles.shieldEmoji}>🛡️</Text>
               <Text style={styles.shieldText}>
-                Your data is 100% safe. We don&apos;t store your login, and over 1M+ users have booked rides securely.
+                Your data is 100% safe. Session cookies & OTP tokens stay strictly on your device and are never stored on any external server.
               </Text>
+            </View>
+
+            {/* Live Bridge Health Diagnostics */}
+            <View style={styles.diagCard}>
+              <Text style={styles.diagTitle}>Live Bridge Status</Text>
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>ONDC BAP & AI Gateway</Text>
+                <Text
+                  style={[
+                    styles.diagBadge,
+                    bapConnected ? styles.diagGreen : styles.diagMuted,
+                  ]}
+                >
+                  {bapConnected ? '🟢 Connected' : '⚪ Local Fallback'}
+                </Text>
+              </View>
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Namma Yatri Direct API</Text>
+                <Text
+                  style={[
+                    styles.diagBadge,
+                    hasNyToken ? styles.diagGreen : styles.diagBlue,
+                  ]}
+                >
+                  {hasNyToken ? '🟢 Token Active' : '🔑 Link via OTP'}
+                </Text>
+              </View>
+              <View style={styles.diagRow}>
+                <Text style={styles.diagLabel}>Rapido PWA Bridge</Text>
+                <Text
+                  style={[
+                    styles.diagBadge,
+                    Platform.OS === 'web' ? styles.diagBlue : styles.diagGreen,
+                  ]}
+                >
+                  {Platform.OS === 'web'
+                    ? '📱 Active on Android/iOS'
+                    : '🟢 unupFe Ready'}
+                </Text>
+              </View>
             </View>
 
             {/* Linked Providers */}
@@ -412,6 +467,10 @@ export function LinkAppsModal({
                 </View>
               </TouchableOpacity>
             ))}
+
+            <Text style={styles.disclaimerText}>
+              FareSnap is an independent commuter comparison utility and is not affiliated with Uber, Ola, Rapido, Namma Yatri, InDrive, Meru, or Bharat Cab. Users optionally sign into their own accounts via an integrated browser or OTP to view personal fare estimates.
+            </Text>
           </ScrollView>
 
           <View style={styles.bottomBar}>
@@ -505,6 +564,54 @@ const styles = StyleSheet.create({
     color: '#475569',
     textAlign: 'center',
     lineHeight: 19,
+  },
+  diagCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 18,
+  },
+  diagTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  diagRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  diagLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  diagBadge: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  diagGreen: {
+    color: '#16a34a',
+  },
+  diagBlue: {
+    color: '#2563eb',
+  },
+  diagMuted: {
+    color: '#64748b',
+  },
+  disclaimerText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 16,
+    marginTop: 14,
+    paddingHorizontal: 8,
   },
   providerCard: {
     flexDirection: 'row',
