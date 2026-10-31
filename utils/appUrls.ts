@@ -158,22 +158,57 @@ function getWebUrl(appName: string, opts?: OpenRideAppOpts): string {
   return config.webUrl;
 }
 
+export function supportsCoordinateHandoff(appName: string): boolean {
+  const config = APP_CONFIGS[appName];
+  return Boolean(config?.buildDeepLink);
+}
+
+export async function openWalkingDirections(
+  origin: Coords,
+  dest: Coords
+): Promise<void> {
+  const webWalkUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${dest.lat},${dest.lng}&travelmode=walking`;
+  try {
+    const canOpen = await Linking.canOpenURL(webWalkUrl);
+    if (canOpen) {
+      await Linking.openURL(webWalkUrl);
+      return;
+    }
+  } catch {}
+  await WebBrowser.openBrowserAsync(webWalkUrl);
+}
+
 export async function openRideApp(
   appName: string,
   opts?: OpenRideAppOpts
-): Promise<void> {
+): Promise<{ handoffHasCoords: boolean }> {
   const deepLink = getDeepLink(appName, opts);
   const webUrl = getWebUrl(appName, opts);
+  const handoffHasCoords = supportsCoordinateHandoff(appName);
+
+  // Best-effort copy destination address on web/supported runtimes when app lacks coordinate deep links
+  if (!handoffHasCoords && opts?.dropAddress) {
+    try {
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === 'function'
+      ) {
+        await navigator.clipboard.writeText(opts.dropAddress);
+      }
+    } catch {}
+  }
 
   try {
     const canOpen = await Linking.canOpenURL(deepLink);
     if (canOpen) {
       await Linking.openURL(deepLink);
-      return;
+      return { handoffHasCoords };
     }
   } catch {
     // fall through to web fallback
   }
 
   await WebBrowser.openBrowserAsync(webUrl);
+  return { handoffHasCoords };
 }
