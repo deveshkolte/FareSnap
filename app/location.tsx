@@ -20,6 +20,10 @@ import {
   LinkableProviderId,
   setProviderLinked,
 } from '../utils/liveSessionBridge';
+import {
+  looksLikeMapsLinkOrCoords,
+  resolveMapsLinkOrCoords,
+} from '../utils/mapsLinkParser';
 
 type LocationData = {
   lat?: number;
@@ -279,6 +283,19 @@ export default function LocationScreen() {
       setPickupSuggestions([]);
       return;
     }
+
+    if (looksLikeMapsLinkOrCoords(text)) {
+      pickupTimer.current = setTimeout(async () => {
+        const resolved = await resolveMapsLinkOrCoords(text);
+        if (resolved) {
+          setPickup(resolved);
+          setPickupSuggestions([]);
+          setActiveField(null);
+        }
+      }, 200);
+      return;
+    }
+
     pickupTimer.current = setTimeout(async () => {
       const controller = new AbortController();
       pickupAbortRef.current = controller;
@@ -298,6 +315,19 @@ export default function LocationScreen() {
       setDropSuggestions([]);
       return;
     }
+
+    if (looksLikeMapsLinkOrCoords(text)) {
+      dropTimer.current = setTimeout(async () => {
+        const resolved = await resolveMapsLinkOrCoords(text);
+        if (resolved) {
+          setDrop(resolved);
+          setDropSuggestions([]);
+          setActiveField(null);
+        }
+      }, 200);
+      return;
+    }
+
     dropTimer.current = setTimeout(async () => {
       const controller = new AbortController();
       dropAbortRef.current = controller;
