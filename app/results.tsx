@@ -42,6 +42,10 @@ import {
   computeSmartPickup,
   SmartPickupSuggestion,
 } from '../utils/smartPickupEngine';
+import {
+  fetchLiveWeatherSurge,
+  LiveWeatherSurgeInfo,
+} from '../utils/weatherSurgeEngine';
 
 type LocationData = {
   lat?: number;
@@ -569,6 +573,10 @@ export default function ResultsScreen() {
 
   const [baseDistanceKm, setBaseDistanceKm] = useState(0);
   const [baseDurationMin, setBaseDurationMin] = useState(0);
+  const [intersectionCount, setIntersectionCount] = useState(0);
+  const [liveWeather, setLiveWeather] = useState<LiveWeatherSurgeInfo | null>(
+    null
+  );
   const [resolvedPickupCoords, setResolvedPickupCoords] = useState<
     RouteCoords | undefined
   >(
@@ -707,12 +715,13 @@ export default function ResultsScreen() {
           setCityLabel(CITY_LABELS[detected]);
           setBaseDistanceKm(result.distanceKm);
           setBaseDurationMin(result.durationMin);
+          setIntersectionCount(result.intersectionCount);
           setResolvedPickupCoords(result.originCoords);
           setResolvedDropCoords(result.destCoords);
 
           const approxCabFare = Math.max(
-            85,
-            Math.round(45 + result.distanceKm * 12)
+            95,
+            Math.round(60 + result.distanceKm * 20)
           );
           computeSmartPickup({
             originCoords: result.originCoords,
@@ -721,8 +730,16 @@ export default function ResultsScreen() {
             distanceKm: result.distanceKm,
             durationMin: result.durationMin,
             referenceCabFare: approxCabFare,
+            entrySteps: result.entrySteps,
           })
             .then((sp) => setSmartPickup(sp))
+            .catch(() => {});
+
+          fetchLiveWeatherSurge(
+            result.originCoords.lat,
+            result.originCoords.lng
+          )
+            .then((w) => setLiveWeather(w))
             .catch(() => {});
 
           fetchRecentCrowdsourcedFares(detected, result.distanceKm)
@@ -792,11 +809,24 @@ export default function ResultsScreen() {
     const options: FlatRideOption[] = [];
 
     for (const item of RIDE_CATALOG) {
+      const weatherMultiplier = liveWeather
+        ? item.category === 'Bike'
+          ? liveWeather.bikeMultiplier
+          : item.category === 'Auto'
+            ? liveWeather.autoMultiplier
+            : liveWeather.cabMultiplier
+        : 1.0;
+
       const est = estimateFare(
         item.engineKey,
         city,
         activeDistanceKm,
-        activeDurationMin
+        activeDurationMin,
+        {
+          weatherMultiplier,
+          pickupAddress: pickup.address,
+          isSmartPickup: smartPickupEnabled,
+        }
       );
       if (!est.available) continue;
 
@@ -882,7 +912,9 @@ export default function ResultsScreen() {
     activeDurationMin,
     city,
     crowdsourcedFares,
+    liveWeather,
     ondcLiveQuotes,
+    pickup.address,
     scrapedLiveProducts,
     smartPickupEnabled,
     smartPickup,
@@ -1298,7 +1330,9 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           <View style={styles.pickupPrefHeaderRow}>
             <Text style={styles.pickupPrefLabel}>Pickup Preference</Text>
             <Text style={styles.routeDistancePill}>
-              📍 {cityLabel} · {activeDistanceKm} km (~{activeDurationMin}m)
+              📍 {cityLabel} · {activeDistanceKm} km (~{activeDurationMin}m
+              {intersectionCount > 0 ? ` · ${intersectionCount} signals` : ''})
+              {liveWeather ? ` · ${liveWeather.conditionLabel}` : ''}
             </Text>
           </View>
 
@@ -1574,6 +1608,16 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                           ₹{item.breakdown.timeFare}
                         </Text>
                       </View>
+                      {item.breakdown.geofenceFee > 0 && (
+                        <View style={styles.breakdownRow}>
+                          <Text style={styles.breakdownLabel}>
+                            Pickup Zone / Toll Fee
+                          </Text>
+                          <Text style={styles.breakdownVal}>
+                            +₹{item.breakdown.geofenceFee}
+                          </Text>
+                        </View>
+                      )}
                       <View style={styles.breakdownRow}>
                         <Text style={styles.breakdownLabel}>Surge</Text>
                         <Text
