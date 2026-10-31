@@ -2,6 +2,33 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type LinkableProviderId = 'uber' | 'rapido' | 'ola' | 'namma_yatri';
 
+export type ScrapedLiveProduct = {
+  providerId: LinkableProviderId;
+  providerName: string;
+  productName: string;
+  category: 'Bike' | 'Auto' | 'Cab';
+  price: number;
+  etaMinutes: number | null;
+  rawText?: string;
+};
+
+export type ScraperBridgeMessage =
+  | {
+      source: 'bh-page-api';
+      type: 'AUTH_STATUS';
+      providerId: LinkableProviderId;
+      isLoggedIn: boolean;
+      currentUrl: string;
+    }
+  | {
+      source: 'bh-page-api';
+      type: 'LIVE_PRODUCTS_SCRAPED';
+      providerId: LinkableProviderId;
+      products: ScrapedLiveProduct[];
+      currentUrl: string;
+      timestamp: number;
+    };
+
 export type LinkableProviderInfo = {
   id: LinkableProviderId;
   name: string;
@@ -9,12 +36,12 @@ export type LinkableProviderInfo = {
   brandColor: string;
   textColor: string;
   loginUrl: string;
-  buildBookingWebUrl: (opts: {
-    pickupLat?: number;
-    pickupLng?: number;
+  buildRouteWebUrl: (opts: {
+    pickupLat: number;
+    pickupLng: number;
     pickupAddress: string;
-    dropLat?: number;
-    dropLng?: number;
+    dropLat: number;
+    dropLng: number;
     dropAddress: string;
   }) => string;
 };
@@ -25,7 +52,7 @@ export type LifetimeSavingsData = {
   lastTripSaved: number;
 };
 
-const LINKED_PROVIDERS_KEY = 'faresnap_linked_providers_v1';
+const LINKED_PROVIDERS_KEY = 'faresnap_linked_providers_v2';
 const LIFETIME_SAVINGS_KEY = 'faresnap_lifetime_savings_v1';
 
 export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
@@ -36,7 +63,7 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
     brandColor: '#000000',
     textColor: '#ffffff',
     loginUrl: 'https://m.uber.com/looking',
-    buildBookingWebUrl: ({
+    buildRouteWebUrl: ({
       pickupLat,
       pickupLng,
       pickupAddress,
@@ -44,23 +71,48 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
       dropLng,
       dropAddress,
     }) => {
-      const params = new URLSearchParams();
-      params.set('action', 'setPickup');
-      if (pickupLat && pickupLng) {
-        params.set('pickup[latitude]', String(pickupLat));
-        params.set('pickup[longitude]', String(pickupLng));
-      }
-      if (pickupAddress) {
-        params.set('pickup[formatted_address]', pickupAddress);
-      }
-      if (dropLat && dropLng) {
-        params.set('dropoff[latitude]', String(dropLat));
-        params.set('dropoff[longitude]', String(dropLng));
-      }
-      if (dropAddress) {
-        params.set('dropoff[formatted_address]', dropAddress);
-      }
-      return `https://m.uber.com/looking?${params.toString()}`;
+      const pickupJson = JSON.stringify({
+        latitude: pickupLat,
+        longitude: pickupLng,
+        addressLine1: pickupAddress.split(',')[0] || pickupAddress,
+        addressLine2: pickupAddress,
+      });
+      const dropJson = JSON.stringify({
+        latitude: dropLat,
+        longitude: dropLng,
+        addressLine1: dropAddress.split(',')[0] || dropAddress,
+        addressLine2: dropAddress,
+      });
+      return `https://m.uber.com/go/product-selection?pickup=${encodeURIComponent(
+        pickupJson
+      )}&drop[0]=${encodeURIComponent(dropJson)}`;
+    },
+  },
+  {
+    id: 'ola',
+    name: 'Ola',
+    shortTag: 'OLA',
+    brandColor: '#16a34a',
+    textColor: '#ffffff',
+    loginUrl: 'https://book.olacabs.com/',
+    buildRouteWebUrl: ({
+      pickupLat,
+      pickupLng,
+      pickupAddress,
+      dropLat,
+      dropLng,
+      dropAddress,
+    }) => {
+      const params = new URLSearchParams({
+        lat: String(pickupLat),
+        lng: String(pickupLng),
+        pickup_name: pickupAddress,
+        drop_lat: String(dropLat),
+        drop_lng: String(dropLng),
+        drop_name: dropAddress,
+        utm_source: 'faresnap',
+      });
+      return `https://book.olacabs.com/?${params.toString()}`;
     },
   },
   {
@@ -70,28 +122,8 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
     brandColor: '#facc15',
     textColor: '#0f172a',
     loginUrl: 'https://m.rapido.bike/',
-    buildBookingWebUrl: () => 'https://m.rapido.bike/',
-  },
-  {
-    id: 'ola',
-    name: 'Ola',
-    shortTag: 'OLA',
-    brandColor: '#16a34a',
-    textColor: '#ffffff',
-    loginUrl: 'https://book.olacabs.com/',
-    buildBookingWebUrl: ({ pickupLat, pickupLng, dropLat, dropLng }) => {
-      const params = new URLSearchParams();
-      if (pickupLat && pickupLng) {
-        params.set('lat', String(pickupLat));
-        params.set('lng', String(pickupLng));
-      }
-      if (dropLat && dropLng) {
-        params.set('drop_lat', String(dropLat));
-        params.set('drop_lng', String(dropLng));
-      }
-      const qs = params.toString();
-      return qs ? `https://book.olacabs.com/?${qs}` : 'https://book.olacabs.com/';
-    },
+    buildRouteWebUrl: ({ pickupLat, pickupLng, dropLat, dropLng }) =>
+      `https://m.rapido.bike/?pickup_lat=${pickupLat}&pickup_lng=${pickupLng}&drop_lat=${dropLat}&drop_lng=${dropLng}`,
   },
   {
     id: 'namma_yatri',
@@ -100,20 +132,26 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
     brandColor: '#f59e0b',
     textColor: '#0f172a',
     loginUrl: 'https://nammayatri.in/',
-    buildBookingWebUrl: () => 'https://nammayatri.in/',
+    buildRouteWebUrl: () => 'https://nammayatri.in/',
   },
 ];
 
 /**
- * Reverse-engineered from BuyHatke's `pageApiHook.js`:
- * Intercepts `Response.prototype.json`, `Response.prototype.text`, `XMLHttpRequest`,
- * and DOM fare elements inside the user's local WebView session and posts parsed
- * live ride quotes back to the React Native host without storing credentials externally.
+ * Builds the injected JavaScript for a specific provider's WebView.
+ * Intercepts both JSON API responses (`fetch` / `XMLHttpRequest`) and live DOM
+ * product rows, normalizes them into `ScrapedLiveProduct[]`, and detects whether
+ * the user is actually logged in or sitting on an auth/OTP wall.
  */
-export const PAGE_API_HOOK_SCRIPT = `
+export const buildProviderScraperScript = (providerId: LinkableProviderId): string => `
 (function() {
-  if (window.__bhPageApiHook) return;
-  window.__bhPageApiHook = true;
+  if (window.__bhPageApiHook_${providerId}) return;
+  window.__bhPageApiHook_${providerId} = true;
+
+  var PROVIDER_ID = '${providerId}';
+  var PROVIDER_NAME =
+    PROVIDER_ID === 'uber' ? 'Uber' :
+    PROVIDER_ID === 'ola' ? 'Ola' :
+    PROVIDER_ID === 'rapido' ? 'Rapido' : 'Namma Yatri';
 
   function postToHost(payload) {
     try {
@@ -126,93 +164,280 @@ export const PAGE_API_HOOK_SCRIPT = `
     } catch (e) {}
   }
 
-  function extractFaresFromJson(url, data) {
-    try {
-      var text = typeof data === 'string' ? data : JSON.stringify(data);
-      // Match ₹ prices or fare fields from Uber / Ola / Rapido API responses
-      var matches = [];
-      var regex = /"(?:fare|amount|price|estimatedFare|totalFare|lowEstimate|displayAmount)"\\s*:\\s*"?(?:₹\\s*)?(\\d{2,4}(?:\\.\\d{1,2})?)"?/gi;
-      var m;
-      while ((m = regex.exec(text)) !== null) {
-        var val = parseFloat(m[1]);
-        if (val >= 25 && val <= 5000) {
-          matches.push(val);
+  function classifyCategory(name) {
+    var lower = String(name || '').toLowerCase();
+    if (lower.indexOf('moto') !== -1 || lower.indexOf('bike') !== -1 || lower.indexOf('scooter') !== -1) {
+      return 'Bike';
+    }
+    if (lower.indexOf('auto') !== -1 || lower.indexOf('rickshaw') !== -1) {
+      return 'Auto';
+    }
+    return 'Cab';
+  }
+
+  function parsePriceNumber(val) {
+    if (typeof val === 'number' && isFinite(val)) return val;
+    if (typeof val !== 'string') return null;
+    var m = val.replace(/,/g, '').match(/(?:₹|INR|Rs\\.?\\s*)?(\\d{2,5}(?:\\.\\d{1,2})?)/i);
+    if (!m) return null;
+    var num = parseFloat(m[1]);
+    return (num >= 20 && num <= 15000) ? num : null;
+  }
+
+  function parseEtaNumber(val) {
+    if (typeof val === 'number' && isFinite(val) && val > 0 && val <= 90) return Math.round(val);
+    if (typeof val !== 'string') return null;
+    var m = val.match(/(\\d{1,2})\\s*min/i);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  // Deep recursive walk over intercepted JSON objects to extract ride product quotes
+  function extractProductsFromJsonObject(root) {
+    var results = [];
+    var seen = {};
+    var visited = 0;
+
+    function walk(node) {
+      if (!node || typeof node !== 'object' || visited > 2500) return;
+      visited++;
+
+      if (Array.isArray(node)) {
+        for (var i = 0; i < node.length; i++) walk(node[i]);
+        return;
+      }
+
+      // Check if this object looks like a ride product/tier item
+      var rawName =
+        node.displayName ||
+        node.productName ||
+        node.vehicleViewDisplayName ||
+        node.categoryName ||
+        node.display_name ||
+        node.title ||
+        node.name;
+
+      var rawPrice =
+        node.fare ||
+        node.formattedFare ||
+        node.estimatedFare ||
+        node.displayAmount ||
+        node.amount ||
+        node.price ||
+        (node.fareInfo && (node.fareInfo.displayAmount || node.fareInfo.value)) ||
+        (node.pricing && (node.pricing.fare || node.pricing.amount));
+
+      var rawEta =
+        node.eta ||
+        node.etaShort ||
+        node.etaMinutes ||
+        node.pickupEta ||
+        node.duration;
+
+      if (typeof rawName === 'string' && rawName.length >= 2 && rawName.length <= 32 && rawPrice !== undefined) {
+        var pNum = parsePriceNumber(rawPrice);
+        if (pNum !== null) {
+          var key = rawName.toLowerCase() + ':' + pNum;
+          if (!seen[key]) {
+            seen[key] = true;
+            results.push({
+              providerId: PROVIDER_ID,
+              providerName: PROVIDER_NAME,
+              productName: rawName.trim(),
+              category: classifyCategory(rawName),
+              price: pNum,
+              etaMinutes: parseEtaNumber(rawEta)
+            });
+          }
         }
       }
-      if (matches.length > 0) {
+
+      var keys = Object.keys(node);
+      for (var k = 0; k < keys.length; k++) {
+        var child = node[keys[k]];
+        if (child && typeof child === 'object') {
+          walk(child);
+        }
+      }
+    }
+
+    try {
+      walk(root);
+    } catch (e) {}
+    return results;
+  }
+
+  function handleJsonPayload(data) {
+    try {
+      var parsed = typeof data === 'string' ? JSON.parse(data) : data;
+      var products = extractProductsFromJsonObject(parsed);
+      if (products.length > 0) {
         postToHost({
           source: 'bh-page-api',
-          type: 'LIVE_FARES_INTERCEPTED',
-          url: url,
-          fares: matches.slice(0, 10),
+          type: 'LIVE_PRODUCTS_SCRAPED',
+          providerId: PROVIDER_ID,
+          products: products,
+          currentUrl: location.href,
           timestamp: Date.now()
         });
       }
     } catch (e) {}
   }
 
+  // 1. Hook Response.prototype.json
   var origJson = Response.prototype.json;
   Response.prototype.json = function() {
     var promise = origJson.apply(this, arguments);
     try {
-      var url = this.url || location.href;
       promise.then(function(data) {
-        extractFaresFromJson(url, data);
+        handleJsonPayload(data);
       }).catch(function() {});
     } catch (e) {}
     return promise;
   };
 
-  var origOpen = XMLHttpRequest.prototype.open;
-  var origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function(method, url) {
+  // 2. Hook Response.prototype.text
+  var origText = Response.prototype.text;
+  Response.prototype.text = function() {
+    var promise = origText.apply(this, arguments);
     try {
-      this.__bhApiUrl = new URL(url, location.href).href;
-    } catch (e) {
-      this.__bhApiUrl = String(url);
-    }
-    return origOpen.apply(this, arguments);
+      promise.then(function(txt) {
+        if (txt && txt.indexOf('₹') !== -1 || txt.indexOf('fare') !== -1) {
+          handleJsonPayload(txt);
+        }
+      }).catch(function() {});
+    } catch (e) {}
+    return promise;
   };
+
+  // 3. Hook XMLHttpRequest
+  var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function() {
-    var apiUrl = this.__bhApiUrl || location.href;
     this.addEventListener('load', function() {
       try {
         if (this.status >= 200 && this.status < 300 && this.responseText) {
-          extractFaresFromJson(apiUrl, this.responseText);
+          handleJsonPayload(this.responseText);
         }
       } catch (e) {}
     });
     return origSend.apply(this, arguments);
   };
 
-  // Also scan DOM periodically for rendered rupee prices (₹82, ₹143.34, etc.)
-  setInterval(function() {
+  // 4. DOM Scraper & Auth Detector (scans rendered product rows on m.uber.com / book.olacabs.com / rapido)
+  var KNOWN_PRODUCT_NAMES = [
+    'Uber Go', 'UberXS', 'Go Non AC', 'Premier', 'UberXL', 'Moto', 'Uber Auto', 'Auto',
+    'Bike Direct', 'Auto Seat Share', 'Auto Pet', 'Cab Non AC', 'Cab AC', 'Cab Premium',
+    'Ola Mini', 'Mini', 'Prime Sedan', 'Prime SUV', 'Ola Auto', 'Ola Bike', 'Bike'
+  ];
+
+  function scanDomForProductsAndAuth() {
     try {
+      var href = location.href.toLowerCase();
       var bodyText = document.body ? document.body.innerText : '';
-      var priceRegex = /₹\\s*(\\d{2,4}(?:\\.\\d{1,2})?)/g;
-      var found = [];
-      var match;
-      while ((match = priceRegex.exec(bodyText)) !== null) {
-        var num = parseFloat(match[1]);
-        if (num >= 25 && num <= 4500 && found.indexOf(num) === -1) {
-          found.push(num);
+
+      var isAuthWall =
+        href.indexOf('auth.uber.com') !== -1 ||
+        href.indexOf('login') !== -1 ||
+        href.indexOf('signin') !== -1 ||
+        Boolean(document.querySelector('input[type="tel"], input[name="phone"], input[autocomplete="tel"]')) ||
+        /enter your (?:phone|mobile) number|sign in to|log in to/i.test(bodyText);
+
+      var domProducts = [];
+      var seenNames = {};
+
+      // Scan list items / cards in DOM that contain both a vehicle name and a ₹ price
+      var candidates = document.querySelectorAll('li, [role="option"], [data-testid*="product"], div');
+      for (var i = 0; i < candidates.length && domProducts.length < 10; i++) {
+        var el = candidates[i];
+        if (el.children.length > 12) continue; // skip huge container divs
+        var txt = (el.innerText || '').trim();
+        if (!txt || txt.length < 5 || txt.length > 160 || txt.indexOf('₹') === -1) continue;
+
+        var priceMatch = txt.replace(/,/g, '').match(/₹\\s*(\\d{2,5}(?:\\.\\d{1,2})?)/);
+        if (!priceMatch) continue;
+        var price = parseFloat(priceMatch[1]);
+        if (!(price >= 20 && price <= 15000)) continue;
+
+        var matchedProduct = null;
+        for (var j = 0; j < KNOWN_PRODUCT_NAMES.length; j++) {
+          var pName = KNOWN_PRODUCT_NAMES[j];
+          var regex = new RegExp('\\\\b' + pName.replace(/\\s+/g, '\\\\s+') + '\\\\b', 'i');
+          if (regex.test(txt)) {
+            matchedProduct = pName;
+            break;
+          }
+        }
+
+        if (matchedProduct && !seenNames[matchedProduct]) {
+          seenNames[matchedProduct] = true;
+          var etaMatch = txt.match(/(\\d{1,2})\\s*min/i);
+          domProducts.push({
+            providerId: PROVIDER_ID,
+            providerName: PROVIDER_NAME,
+            productName: matchedProduct,
+            category: classifyCategory(matchedProduct),
+            price: price,
+            etaMinutes: etaMatch ? parseInt(etaMatch[1], 10) : null
+          });
         }
       }
-      if (found.length > 0) {
+
+      if (domProducts.length > 0) {
         postToHost({
           source: 'bh-page-api',
-          type: 'DOM_FARES_DETECTED',
-          url: location.href,
-          fares: found.slice(0, 12),
+          type: 'LIVE_PRODUCTS_SCRAPED',
+          providerId: PROVIDER_ID,
+          products: domProducts,
+          currentUrl: location.href,
           timestamp: Date.now()
+        });
+        postToHost({
+          source: 'bh-page-api',
+          type: 'AUTH_STATUS',
+          providerId: PROVIDER_ID,
+          isLoggedIn: true,
+          currentUrl: location.href
+        });
+      } else {
+        postToHost({
+          source: 'bh-page-api',
+          type: 'AUTH_STATUS',
+          providerId: PROVIDER_ID,
+          isLoggedIn: !isAuthWall,
+          currentUrl: location.href
         });
       }
     } catch (e) {}
-  }, 2200);
+  }
+
+  setInterval(scanDomForProductsAndAuth, 2000);
+  setTimeout(scanDomForProductsAndAuth, 800);
 })();
 true;
 `;
 
+export const buildAutoSelectVehicleScript = (productName: string): string => `
+(function() {
+  try {
+    var target = ${JSON.stringify(productName)}.toLowerCase();
+    var nodes = document.querySelectorAll('li, [role="option"], [data-testid*="product"], button, div');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el.children.length > 8) continue;
+      var txt = (el.innerText || '').toLowerCase();
+      if (txt.indexOf(target) !== -1 && txt.indexOf('₹') !== -1) {
+        el.click();
+        break;
+      }
+    }
+  } catch (e) {}
+})();
+true;
+`;
+
+/**
+ * Default linked state is `false` for all providers so we NEVER fake "Linked"
+ * status until the user actually links their session in the WebView!
+ */
 export async function getLinkedProviders(): Promise<Record<LinkableProviderId, boolean>> {
   try {
     const raw = await AsyncStorage.getItem(LINKED_PROVIDERS_KEY);
@@ -221,8 +446,8 @@ export async function getLinkedProviders(): Promise<Record<LinkableProviderId, b
     }
   } catch {}
   return {
-    uber: true,
-    rapido: true,
+    uber: false,
+    rapido: false,
     ola: false,
     namma_yatri: false,
   };

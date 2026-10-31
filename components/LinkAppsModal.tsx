@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -10,32 +10,70 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
+  buildAutoSelectVehicleScript,
+  buildProviderScraperScript,
   LINKABLE_PROVIDERS,
   LinkableProviderId,
   LinkableProviderInfo,
-  PAGE_API_HOOK_SCRIPT,
+  ScrapedLiveProduct,
+  ScraperBridgeMessage,
 } from '../utils/liveSessionBridge';
+
+type RouteBookingOpts = {
+  pickupLat: number;
+  pickupLng: number;
+  pickupAddress: string;
+  dropLat: number;
+  dropLng: number;
+  dropAddress: string;
+  autoSelectProduct?: string;
+};
 
 type Props = {
   visible: boolean;
   linkedMap: Record<LinkableProviderId, boolean>;
+  initialProviderId?: LinkableProviderId | null;
+  routeOpts?: RouteBookingOpts;
   onToggleLink: (id: LinkableProviderId, linked: boolean) => void;
-  onInterceptedFares?: (providerId: LinkableProviderId, fares: number[]) => void;
+  onLiveProductsScraped?: (
+    providerId: LinkableProviderId,
+    products: ScrapedLiveProduct[]
+  ) => void;
   onClose: () => void;
 };
 
 export function LinkAppsModal({
   visible,
   linkedMap,
+  initialProviderId,
+  routeOpts,
   onToggleLink,
-  onInterceptedFares,
+  onLiveProductsScraped,
   onClose,
 }: Props) {
   const [activeWebProvider, setActiveWebProvider] =
     useState<LinkableProviderInfo | null>(null);
+  const [detectedLoggedIn, setDetectedLoggedIn] = useState(false);
+
+  useEffect(() => {
+    if (visible && initialProviderId) {
+      const found = LINKABLE_PROVIDERS.find((p) => p.id === initialProviderId);
+      setActiveWebProvider(found || null);
+    } else if (!visible) {
+      setActiveWebProvider(null);
+      setDetectedLoggedIn(false);
+    }
+  }, [visible, initialProviderId]);
 
   const linkedProviders = LINKABLE_PROVIDERS.filter((p) => linkedMap[p.id]);
   const unlinkedProviders = LINKABLE_PROVIDERS.filter((p) => !linkedMap[p.id]);
+
+  const getWebViewUrl = (provider: LinkableProviderInfo) => {
+    if (routeOpts) {
+      return provider.buildRouteWebUrl(routeOpts);
+    }
+    return provider.loginUrl;
+  };
 
   return (
     <Modal
@@ -43,7 +81,7 @@ export function LinkAppsModal({
       animationType="slide"
       transparent={false}
       onRequestClose={() => {
-        if (activeWebProvider) {
+        if (activeWebProvider && !initialProviderId) {
           setActiveWebProvider(null);
         } else {
           onClose();
@@ -54,27 +92,43 @@ export function LinkAppsModal({
         <View style={styles.webviewContainer}>
           <View style={styles.webviewHeader}>
             <TouchableOpacity
-              onPress={() => setActiveWebProvider(null)}
+              onPress={() => {
+                if (initialProviderId) {
+                  onClose();
+                } else {
+                  setActiveWebProvider(null);
+                }
+              }}
               style={styles.closeCircle}
             >
               <Text style={styles.closeCircleText}>←</Text>
             </TouchableOpacity>
             <View style={{ flex: 1, marginHorizontal: 12 }}>
               <Text style={styles.webviewTitle}>
-                Link {activeWebProvider.name}
+                {routeOpts?.autoSelectProduct
+                  ? `Book ${activeWebProvider.name} (${routeOpts.autoSelectProduct})`
+                  : `Link ${activeWebProvider.name}`}
               </Text>
               <Text style={styles.webviewSubtitle}>
-                Log in once · Session stays on your device
+                {detectedLoggedIn
+                  ? '🟢 Active session detected on device'
+                  : 'Log in once with OTP · Session stays on your device'}
               </Text>
             </View>
             <TouchableOpacity
               style={styles.doneLinkBtn}
               onPress={() => {
                 onToggleLink(activeWebProvider.id, true);
-                setActiveWebProvider(null);
+                if (initialProviderId) {
+                  onClose();
+                } else {
+                  setActiveWebProvider(null);
+                }
               }}
             >
-              <Text style={styles.doneLinkBtnText}>Linked ✓</Text>
+              <Text style={styles.doneLinkBtnText}>
+                {routeOpts?.autoSelectProduct ? 'Done ✓' : 'Linked ✓'}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -84,26 +138,43 @@ export function LinkAppsModal({
                 Connect {activeWebProvider.name}
               </Text>
               <Text style={styles.webFallbackSub}>
-                Tap &quot;Linked ✓&quot; above after signing into {activeWebProvider.name}.
+                In-app WebView session bridge runs on Android & iOS. Tap &quot;Linked ✓&quot; above after signing in.
               </Text>
             </View>
           ) : (
             <WebView
-              source={{ uri: activeWebProvider.loginUrl }}
-              injectedJavaScript={PAGE_API_HOOK_SCRIPT}
+              source={{ uri: getWebViewUrl(activeWebProvider) }}
+              injectedJavaScriptBeforeContentLoaded={buildProviderScraperScript(
+                activeWebProvider.id
+              )}
+              injectedJavaScript={
+                buildProviderScraperScript(activeWebProvider.id) +
+                (routeOpts?.autoSelectProduct
+                  ? buildAutoSelectVehicleScript(routeOpts.autoSelectProduct)
+                  : '')
+              }
               javaScriptEnabled
               domStorageEnabled
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
+              userAgent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
               onMessage={(event) => {
                 try {
-                  const data = JSON.parse(event.nativeEvent.data);
+                  const msg = JSON.parse(
+                    event.nativeEvent.data
+                  ) as ScraperBridgeMessage;
+                  if (msg?.source !== 'bh-page-api') return;
+
                   if (
-                    data?.source === 'bh-page-api' &&
-                    Array.isArray(data.fares) &&
-                    data.fares.length > 0
+                    msg.type === 'LIVE_PRODUCTS_SCRAPED' &&
+                    Array.isArray(msg.products) &&
+                    msg.products.length > 0
                   ) {
-                    onInterceptedFares?.(activeWebProvider.id, data.fares);
+                    setDetectedLoggedIn(true);
+                    onToggleLink(activeWebProvider.id, true);
+                    onLiveProductsScraped?.(activeWebProvider.id, msg.products);
+                  } else if (msg.type === 'AUTH_STATUS') {
+                    setDetectedLoggedIn(msg.isLoggedIn);
                   }
                 } catch {}
               }}
@@ -157,7 +228,12 @@ export function LinkAppsModal({
                     {p.shortTag}
                   </Text>
                 </View>
-                <Text style={styles.providerName}>{p.name}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.providerName}>{p.name}</Text>
+                  <Text style={styles.providerSubHint}>
+                    Tap to open session · Long-press to unlink
+                  </Text>
+                </View>
                 <TouchableOpacity
                   style={styles.linkedStatusRow}
                   onPress={() => setActiveWebProvider(p)}
@@ -333,6 +409,11 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#0f172a',
+  },
+  providerSubHint: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
   },
   linkedStatusRow: {
     flexDirection: 'row',

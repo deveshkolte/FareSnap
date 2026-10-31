@@ -99,8 +99,8 @@ export default function LocationScreen() {
   const [linkedProviders, setLinkedProviders] = useState<
     Record<LinkableProviderId, boolean>
   >({
-    uber: true,
-    rapido: true,
+    uber: false,
+    rapido: false,
     ola: false,
     namma_yatri: false,
   });

@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { LinkAppsModal } from '../components/LinkAppsModal';
+import { LiveFareScraperPool } from '../components/LiveFareScraperPool';
 import { openRideApp } from '../utils/appUrls';
 import { CityKey, detectCity } from '../utils/cityDetector';
 import { getRoadDistance, RouteCoords } from '../utils/distanceEngine';
@@ -33,6 +34,7 @@ import {
   LifetimeSavingsData,
   LinkableProviderId,
   recordTripSavings,
+  ScrapedLiveProduct,
   setProviderLinked,
 } from '../utils/liveSessionBridge';
 import {
@@ -50,9 +52,12 @@ type RideCategoryTab = 'All' | 'Bike' | 'Auto' | 'Cab';
 type SortField = 'fare' | 'eta';
 type SortOrder = 'asc' | 'desc';
 
+type QuoteSourceKind = 'live_scraped' | 'community_verified' | 'estimated';
+
 type FlatRideOption = {
   id: string;
   providerName: string;
+  linkId?: LinkableProviderId;
   providerBadgeText: string;
   providerBadgeBg: string;
   providerBadgeColor: string;
@@ -63,8 +68,7 @@ type FlatRideOption = {
   price: number;
   highPrice: number;
   isSurge: boolean;
-  isLiveLinked: boolean;
-  isRiderVerified: boolean;
+  sourceKind: QuoteSourceKind;
   breakdown: FareBreakdown;
 };
 
@@ -77,7 +81,7 @@ type AIInsight = {
   smartEstimate: string;
 };
 
-// BuyHatke-style complete product catalog across providers (matching f_07 & f_08)
+// Base catalog of products across providers (zero fake decimal cents)
 const RIDE_CATALOG: {
   id: string;
   providerName: string;
@@ -86,9 +90,9 @@ const RIDE_CATALOG: {
   providerBadgeBg: string;
   providerBadgeColor: string;
   productName: string;
+  matchAliases: string[];
   engineKey: string;
   priceMultiplier: number;
-  decimalCents: number;
   category: 'Bike' | 'Auto' | 'Cab';
   vehicleEmoji: string;
   baseEta: number;
@@ -101,9 +105,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Bike Direct',
+    matchAliases: ['bike direct', 'bike', 'rapido bike'],
     engineKey: 'RapidoBike',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Bike',
     vehicleEmoji: '🏍️',
     baseEta: 4,
@@ -115,10 +119,10 @@ const RIDE_CATALOG: {
     providerBadgeText: 'Uber',
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
-    productName: 'Bike Direct',
+    productName: 'Uber Moto',
+    matchAliases: ['moto', 'uber moto', 'bike direct', 'bike'],
     engineKey: 'UberMoto',
     priceMultiplier: 1.0,
-    decimalCents: 0.13,
     category: 'Bike',
     vehicleEmoji: '🏍️',
     baseEta: 6,
@@ -130,10 +134,10 @@ const RIDE_CATALOG: {
     providerBadgeText: 'OLA',
     providerBadgeBg: '#16a34a',
     providerBadgeColor: '#ffffff',
-    productName: 'Bike',
+    productName: 'Ola Bike',
+    matchAliases: ['ola bike', 'bike'],
     engineKey: 'OlaBike',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Bike',
     vehicleEmoji: '🏍️',
     baseEta: 5,
@@ -146,9 +150,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Auto Seat Share',
+    matchAliases: ['auto seat share', 'seat share'],
     engineKey: 'RapidoAuto',
     priceMultiplier: 0.78,
-    decimalCents: 0,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 4,
@@ -161,9 +165,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#f59e0b',
     providerBadgeColor: '#0f172a',
     productName: 'Auto Direct',
+    matchAliases: ['auto direct', 'namma yatri auto', 'auto'],
     engineKey: 'NammaYatriAuto',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 3,
@@ -175,10 +179,10 @@ const RIDE_CATALOG: {
     providerBadgeText: 'Uber',
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
-    productName: 'Auto',
+    productName: 'Uber Auto',
+    matchAliases: ['uber auto', 'auto'],
     engineKey: 'UberAuto',
     priceMultiplier: 1.0,
-    decimalCents: 0.34,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 2,
@@ -191,9 +195,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Auto',
+    matchAliases: ['auto', 'rapido auto'],
     engineKey: 'RapidoAuto',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 4,
@@ -205,10 +209,10 @@ const RIDE_CATALOG: {
     providerBadgeText: 'OLA',
     providerBadgeBg: '#16a34a',
     providerBadgeColor: '#ffffff',
-    productName: 'Auto',
+    productName: 'Ola Auto',
+    matchAliases: ['ola auto', 'auto'],
     engineKey: 'OlaAuto',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 5,
@@ -220,9 +224,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#2563eb',
     providerBadgeColor: '#ffffff',
     productName: 'Auto Flex',
+    matchAliases: ['indrive auto'],
     engineKey: 'InDriveAuto',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 6,
@@ -235,9 +239,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Auto Pet',
+    matchAliases: ['auto pet'],
     engineKey: 'RapidoAuto',
     priceMultiplier: 1.28,
-    decimalCents: 0,
     category: 'Auto',
     vehicleEmoji: '🛺',
     baseEta: 4,
@@ -250,9 +254,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Cab Non AC',
+    matchAliases: ['cab non ac', 'cab economy'],
     engineKey: 'RapidoCab',
     priceMultiplier: 0.9,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 4,
@@ -264,9 +268,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#ea580c',
     providerBadgeColor: '#ffffff',
     productName: 'Bharat Mini',
+    matchAliases: ['bharat mini'],
     engineKey: 'BharatCab',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 7,
@@ -279,9 +283,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Cab AC',
+    matchAliases: ['cab ac', 'rapido cab'],
     engineKey: 'RapidoCab',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 4,
@@ -294,9 +298,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
     productName: 'UberXS',
+    matchAliases: ['uberxs', 'uber xs'],
     engineKey: 'UberGo',
     priceMultiplier: 0.92,
-    decimalCents: 0.38,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 5,
@@ -308,9 +312,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#2563eb',
     providerBadgeColor: '#ffffff',
     productName: 'Cab Mini',
+    matchAliases: ['indrive mini'],
     engineKey: 'InDrive',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 6,
@@ -323,9 +327,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#16a34a',
     providerBadgeColor: '#ffffff',
     productName: 'Ola Mini',
+    matchAliases: ['ola mini', 'mini'],
     engineKey: 'OlaMini',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 5,
@@ -338,9 +342,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#f59e0b',
     providerBadgeColor: '#0f172a',
     productName: 'Cab AC',
+    matchAliases: ['namma yatri cab', 'cab ac'],
     engineKey: 'NammaYatriCab',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 6,
@@ -353,9 +357,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#facc15',
     providerBadgeColor: '#0f172a',
     productName: 'Cab Premium',
+    matchAliases: ['cab premium'],
     engineKey: 'RapidoCab',
     priceMultiplier: 1.15,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 4,
@@ -368,9 +372,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
     productName: 'Go Non AC',
+    matchAliases: ['go non ac', 'uber go non ac'],
     engineKey: 'UberGo',
     priceMultiplier: 0.96,
-    decimalCents: 0.53,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 5,
@@ -383,9 +387,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
     productName: 'Uber Go',
+    matchAliases: ['uber go', 'ubergo'],
     engineKey: 'UberGo',
     priceMultiplier: 1.0,
-    decimalCents: 0.97,
     category: 'Cab',
     vehicleEmoji: '🚕',
     baseEta: 5,
@@ -398,9 +402,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#16a34a',
     providerBadgeColor: '#ffffff',
     productName: 'Prime Sedan',
+    matchAliases: ['prime sedan', 'ola prime sedan', 'sedan'],
     engineKey: 'OlaPrimeSedan',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚖',
     baseEta: 7,
@@ -413,9 +417,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
     productName: 'Uber Premier',
+    matchAliases: ['premier', 'uber premier'],
     engineKey: 'UberPremier',
     priceMultiplier: 1.0,
-    decimalCents: 0.45,
     category: 'Cab',
     vehicleEmoji: '🚖',
     baseEta: 6,
@@ -427,9 +431,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#0d9488',
     providerBadgeColor: '#ffffff',
     productName: 'Meru Sedan',
+    matchAliases: ['meru sedan'],
     engineKey: 'Meru',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚖',
     baseEta: 9,
@@ -441,9 +445,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#4f46e5',
     providerBadgeColor: '#ffffff',
     productName: 'Chauffeur AC',
+    matchAliases: ['savaari'],
     engineKey: 'Savaari',
     priceMultiplier: 1.0,
-    decimalCents: 0,
     category: 'Cab',
     vehicleEmoji: '🚖',
     baseEta: 14,
@@ -456,9 +460,9 @@ const RIDE_CATALOG: {
     providerBadgeBg: '#000000',
     providerBadgeColor: '#ffffff',
     productName: 'UberXL',
+    matchAliases: ['uberxl', 'uber xl', 'xl'],
     engineKey: 'UberXL',
     priceMultiplier: 1.0,
-    decimalCents: 0.73,
     category: 'Cab',
     vehicleEmoji: '🚙',
     baseEta: 8,
@@ -571,24 +575,32 @@ export default function ResultsScreen() {
       : undefined
   );
 
-  // BuyHatke Smart Pickup ("Current Location" vs "Smart Pickup" toggle, f_07)
+  // BuyHatke Smart Pickup ("Current Location" vs "Smart Pickup" toggle)
   const [smartPickup, setSmartPickup] = useState<SmartPickupSuggestion | null>(
     null
   );
   const [smartPickupEnabled, setSmartPickupEnabled] = useState(false);
 
-  // Linked Providers & Intercepted Live Fares (f_01)
+  // Linked Providers & Real Scraped Live Products from WebView Pool
   const [linkModalVisible, setLinkModalVisible] = useState(false);
+  const [linkModalInitialProvider, setLinkModalInitialProvider] =
+    useState<LinkableProviderId | null>(null);
+  const [linkModalAutoBookProduct, setLinkModalAutoBookProduct] = useState<
+    string | undefined
+  >(undefined);
   const [linkedProviders, setLinkedProviders] = useState<
     Record<LinkableProviderId, boolean>
   >({
-    uber: true,
-    rapido: true,
+    uber: false,
+    rapido: false,
     ola: false,
     namma_yatri: false,
   });
-  const [interceptedLiveFares, setInterceptedLiveFares] = useState<
-    Partial<Record<LinkableProviderId, number[]>>
+  const [scrapedLiveProducts, setScrapedLiveProducts] = useState<
+    Partial<Record<LinkableProviderId, ScrapedLiveProduct[]>>
+  >({});
+  const [providerAuthExpired, setProviderAuthExpired] = useState<
+    Partial<Record<LinkableProviderId, boolean>>
   >({});
 
   // Crowdsourced rider calibration map
@@ -596,7 +608,7 @@ export default function ResultsScreen() {
     Record<string, number>
   >({});
 
-  // BuyHatke Booking Flow Sheets (f_09, f_10, f_11, f_12, f_14)
+  // BuyHatke Booking Flow Sheets
   const [confirmRideSheetVisible, setConfirmRideSheetVisible] = useState(false);
   const [paymentSheetVisible, setPaymentSheetVisible] = useState(false);
   const [selectedPaymentId, setSelectedPaymentId] = useState('cash');
@@ -618,7 +630,6 @@ export default function ResultsScreen() {
   const lastAiKeyRef = useRef<string>('');
   const pulseAnim = useRef(new Animated.Value(0.45)).current;
 
-  // Skeleton pulse animation (f_06)
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -721,7 +732,10 @@ export default function ResultsScreen() {
     loadCityAndRoute();
   }, [pickup, destination]);
 
-  // Build flat list of all ride products (BuyHatke f_07 & f_08 style)
+  // Build flat list of all ride products merging:
+  // 1) Real WebView-scraped products (`scrapedLiveProducts`) when available
+  // 2) Community-verified fares from Supabase (`crowdsourcedFares`)
+  // 3) Honest city rate-card + OSRM distance estimates (`estimateFare`)
   const allRideOptions = useMemo((): FlatRideOption[] => {
     if (activeDistanceKm <= 0) return [];
 
@@ -738,63 +752,58 @@ export default function ResultsScreen() {
 
       let price = Math.round(est.low * item.priceMultiplier);
       let highPrice = Math.round(est.high * item.priceMultiplier);
-      let isRiderVerified = false;
+      let etaMinutes: number | null =
+        smartPickupEnabled && smartPickup
+          ? Math.max(2, item.baseEta - 1)
+          : item.baseEta;
+      let sourceKind: QuoteSourceKind = 'estimated';
 
-      // Apply crowdsourced calibration if present for this provider
+      // Check if community rider report exists in Supabase for this provider
       const crowdFare = crowdsourcedFares[item.providerName];
       if (crowdFare && item.priceMultiplier === 1.0) {
         price = Math.round(price * 0.65 + crowdFare * 0.35);
         highPrice = Math.max(price + 12, Math.round(price * 1.18));
-        isRiderVerified = true;
+        sourceKind = 'community_verified';
       }
 
-      // Apply live WebView bridge intercepted fares if user linked this provider
-      const liveFares = item.linkId
-        ? interceptedLiveFares[item.linkId]
+      // Check if LiveFareScraperPool intercepted an actual live price for this product
+      const providerLiveList = item.linkId
+        ? scrapedLiveProducts[item.linkId]
         : undefined;
-      if (liveFares && liveFares.length > 0) {
-        const sortedLive = [...liveFares].sort((a, b) => a - b);
-        const targetIdx =
-          item.category === 'Bike'
-            ? 0
-            : item.category === 'Auto'
-              ? Math.min(1, sortedLive.length - 1)
-              : Math.min(2, sortedLive.length - 1);
-        price = sortedLive[targetIdx];
+      if (providerLiveList && providerLiveList.length > 0) {
+        const matchedLive =
+          providerLiveList.find((lp) =>
+            item.matchAliases.some(
+              (alias) => lp.productName.toLowerCase() === alias
+            )
+          ) ||
+          providerLiveList.find((lp) => lp.category === item.category);
+
+        if (matchedLive) {
+          price = matchedLive.price;
+          highPrice = Math.round(matchedLive.price * 1.05);
+          if (matchedLive.etaMinutes !== null) {
+            etaMinutes = matchedLive.etaMinutes;
+          }
+          sourceKind = 'live_scraped';
+        }
       }
-
-      // Smart Pickup micro-surge discount
-      if (smartPickupEnabled) {
-        price = Math.max(25, Math.round(price * 0.91));
-        highPrice = Math.max(price + 10, Math.round(highPrice * 0.91));
-      }
-
-      const isLiveLinked = Boolean(item.linkId && linkedProviders[item.linkId]);
-      const finalPrice =
-        isLiveLinked && item.decimalCents > 0 && Number.isInteger(price)
-          ? Number((price + item.decimalCents).toFixed(2))
-          : price;
-
-      const eta =
-        smartPickupEnabled && smartPickup
-          ? Math.max(2, item.baseEta - 1)
-          : item.baseEta;
 
       options.push({
         id: item.id,
         providerName: item.providerName,
+        linkId: item.linkId,
         providerBadgeText: item.providerBadgeText,
         providerBadgeBg: item.providerBadgeBg,
         providerBadgeColor: item.providerBadgeColor,
         productName: item.productName,
         category: item.category,
         vehicleEmoji: item.vehicleEmoji,
-        etaMinutes: item.id === 'uber_xs' ? null : eta,
-        price: finalPrice,
+        etaMinutes,
+        price,
         highPrice,
         isSurge: est.isSurge,
-        isLiveLinked,
-        isRiderVerified,
+        sourceKind,
         breakdown: est.breakdown,
       });
     }
@@ -805,13 +814,12 @@ export default function ResultsScreen() {
     activeDurationMin,
     city,
     crowdsourcedFares,
-    interceptedLiveFares,
-    linkedProviders,
+    scrapedLiveProducts,
     smartPickupEnabled,
     smartPickup,
   ]);
 
-  // Filter & Sort options (BuyHatke All | Bike | Auto | Cab + Sort by ETA or Fare)
+  // Filter & Sort options
   const displayedOptions = useMemo(() => {
     const filtered =
       selectedCategory === 'All'
@@ -832,7 +840,6 @@ export default function ResultsScreen() {
     return filtered;
   }, [allRideOptions, selectedCategory, sortField, sortOrder]);
 
-  // Default selection to cheapest option in current view
   useEffect(() => {
     if (displayedOptions.length > 0) {
       const stillExists = displayedOptions.some((o) => o.id === selectedRideId);
@@ -850,7 +857,6 @@ export default function ResultsScreen() {
     [displayedOptions, selectedRideId]
   );
 
-  // Compare against UberXL (or highest cab fare) for BuyHatke's "You're saving ₹X compared to Uber UberXL"
   const uberXlOption = useMemo(
     () =>
       allRideOptions.find((o) => o.id === 'uber_xl') ||
@@ -862,7 +868,7 @@ export default function ResultsScreen() {
   const savingsVsUberXl = useMemo(() => {
     if (!selectedRide || !uberXlOption) return 0;
     const diff = uberXlOption.price - selectedRide.price;
-    return diff > 0 ? Number(diff.toFixed(2)) : 18.5;
+    return diff > 0 ? Number(diff.toFixed(2)) : 0;
   }, [selectedRide, uberXlOption]);
 
   const hourlyForecast = useMemo(() => {
@@ -974,7 +980,6 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     allRideOptions,
   ]);
 
-  // Show Ride Completed & Lifetime Savings modal when user returns from provider app
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active' && pendingBookRideRef.current) {
@@ -994,19 +999,28 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     }
   };
 
-  // BuyHatke Confirm Ride -> Finding Ride -> Pickup in 2 Min -> Launch Provider -> Ride CompletedSavings
-  const handleConfirmRideBooking = async () => {
+  // Launch either In-WebView Authenticated Session Checkout OR Native Deep Link
+  const handleConfirmRideBooking = async (mode: 'native_app' | 'in_app_webview') => {
     if (!selectedRide) return;
 
     setConfirmRideSheetVisible(false);
-    setBookingPhase('finding');
 
+    if (mode === 'in_app_webview' && selectedRide.linkId) {
+      const updatedSavings = await recordTripSavings(savingsVsUberXl);
+      setLifetimeSavings(updatedSavings);
+      setLinkModalInitialProvider(selectedRide.linkId);
+      setLinkModalAutoBookProduct(selectedRide.productName);
+      setLinkModalVisible(true);
+      return;
+    }
+
+    setBookingPhase('finding');
     const updatedSavings = await recordTripSavings(savingsVsUberXl);
     setLifetimeSavings(updatedSavings);
 
     setTimeout(() => {
       setBookingPhase('confirmed');
-    }, 900);
+    }, 850);
 
     setTimeout(async () => {
       pendingBookRideRef.current = selectedRide;
@@ -1022,14 +1036,13 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         });
       } catch {}
 
-      // If WebBrowser closed inline or stayed in app, transition to completed savings sheet
       setTimeout(() => {
         if (pendingBookRideRef.current) {
           pendingBookRideRef.current = null;
           setBookingPhase('completed');
         }
       }, 1400);
-    }, 1900);
+    }, 1750);
   };
 
   const handleShareSavings = async () => {
@@ -1059,6 +1072,9 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
   };
 
   const linkedCount = Object.values(linkedProviders).filter(Boolean).length;
+  const expiredProviders = (
+    Object.keys(providerAuthExpired) as LinkableProviderId[]
+  ).filter((id) => linkedProviders[id] && providerAuthExpired[id]);
 
   if (routeError) {
     return (
@@ -1089,7 +1105,6 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     );
   }
 
-  // BuyHatke Skeleton Loading State ("Finding nearby rides around you...", f_06)
   if (isLoadingRoute) {
     return (
       <>
@@ -1156,7 +1171,11 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             <View style={styles.headerRightRow}>
               <TouchableOpacity
                 style={styles.headerLinkBtn}
-                onPress={() => setLinkModalVisible(true)}
+                onPress={() => {
+                  setLinkModalInitialProvider(null);
+                  setLinkModalAutoBookProduct(undefined);
+                  setLinkModalVisible(true);
+                }}
               >
                 <Text style={styles.headerLinkBtnText}>🔌 {linkedCount}/4</Text>
               </TouchableOpacity>
@@ -1171,8 +1190,41 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         }}
       />
 
+      {/* Offscreen Background WebView Scraper Pool for Linked Providers */}
+      <LiveFareScraperPool
+        linkedMap={linkedProviders}
+        pickupLat={activePickupCoords?.lat}
+        pickupLng={activePickupCoords?.lng}
+        pickupAddress={
+          smartPickupEnabled && smartPickup
+            ? smartPickup.pickupLabel
+            : pickup.address
+        }
+        dropLat={resolvedDropCoords?.lat}
+        dropLng={resolvedDropCoords?.lng}
+        dropAddress={destination.address}
+        onLiveProductsScraped={(providerId, products) => {
+          setScrapedLiveProducts((prev) => ({
+            ...prev,
+            [providerId]: products,
+          }));
+          setProviderAuthExpired((prev) => ({
+            ...prev,
+            [providerId]: false,
+          }));
+        }}
+        onAuthStatusDetected={(providerId, isLoggedIn) => {
+          if (!isLoggedIn) {
+            setProviderAuthExpired((prev) => ({
+              ...prev,
+              [providerId]: true,
+            }));
+          }
+        }}
+      />
+
       <View style={styles.container}>
-        {/* Top Controls Panel (Exact BuyHatke f_07 & f_08 layout) */}
+        {/* Top Controls Panel */}
         <View style={styles.topControlsPanel}>
           <View style={styles.pickupPrefHeaderRow}>
             <Text style={styles.pickupPrefLabel}>Pickup Preference</Text>
@@ -1181,7 +1233,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             </Text>
           </View>
 
-          {/* Segmented Control 1: Current Location vs Smart Pickup (f_07) */}
+          {/* Segmented Control 1: Current Location vs Smart Pickup */}
           <View style={styles.segmentedGroup}>
             <TouchableOpacity
               style={[
@@ -1233,7 +1285,39 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             </View>
           )}
 
-          {/* Segmented Control 2: All | Bike | Auto | Cab (f_07) */}
+          {/* Prompt to link apps or re-authenticate expired WebView sessions */}
+          {linkedCount === 0 ? (
+            <TouchableOpacity
+              style={styles.linkBannerPrompt}
+              onPress={() => {
+                setLinkModalInitialProvider(null);
+                setLinkModalAutoBookProduct(undefined);
+                setLinkModalVisible(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.linkBannerText}>
+                🔌 Link Uber, Ola or Rapido to stream live personal fares ›
+              </Text>
+            </TouchableOpacity>
+          ) : expiredProviders.length > 0 ? (
+            <TouchableOpacity
+              style={styles.expiredBannerPrompt}
+              onPress={() => {
+                setLinkModalInitialProvider(expiredProviders[0]);
+                setLinkModalAutoBookProduct(undefined);
+                setLinkModalVisible(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.expiredBannerText}>
+                ⚠️ Sign-in required in WebView for{' '}
+                {expiredProviders.join(', ').toUpperCase()} — Tap to log in ›
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {/* Segmented Control 2: All | Bike | Auto | Cab */}
           <View style={[styles.segmentedGroup, { marginTop: 10 }]}>
             {(['All', 'Bike', 'Auto', 'Cab'] as RideCategoryTab[]).map(
               (tab) => {
@@ -1262,7 +1346,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             )}
           </View>
 
-          {/* Sort Header Row: Type | ETA ⇅ | ₹ ↓ Fare ⇅ (f_07 & f_08) */}
+          {/* Sort Header Row: Type | ETA ⇅ | ₹ ↓ Fare ⇅ */}
           <View style={styles.sortHeaderBar}>
             <View style={styles.sortColLeft}>
               <Text style={styles.sortHeaderLabel}>🚗 Type</Text>
@@ -1300,7 +1384,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           </View>
         </View>
 
-        {/* Scrollable Flat Ride Option Cards (f_07 & f_08) */}
+        {/* Scrollable Flat Ride Option Cards */}
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
@@ -1309,7 +1393,8 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           {displayedOptions.map((item, idx) => {
             const isSelected = selectedRide?.id === item.id;
             const isExpanded = expandedRideId === item.id;
-            const isCheapest = idx === 0 && sortField === 'fare' && sortOrder === 'asc';
+            const isCheapest =
+              idx === 0 && sortField === 'fare' && sortOrder === 'asc';
 
             return (
               <View key={item.id}>
@@ -1322,14 +1407,12 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   ]}
                 >
                   <View style={styles.rideOptionMainRow}>
-                    {/* Left 3D-style Vehicle Illustration Box */}
                     <View style={styles.vehicleIconBox}>
                       <Text style={styles.vehicleEmojiText}>
                         {item.vehicleEmoji}
                       </Text>
                     </View>
 
-                    {/* Center Provider Badge + Product Name + ETA */}
                     <View style={styles.rideOptionInfo}>
                       <View style={styles.productTitleRow}>
                         <View
@@ -1365,11 +1448,12 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                             ? `${item.etaMinutes} min`
                             : 'N/A min'}
                         </Text>
-                        {item.isLiveLinked && (
-                          <Text style={styles.liveDotLabel}>· 🟢 Linked</Text>
-                        )}
-                        {!item.isLiveLinked && item.isRiderVerified && (
+                        {item.sourceKind === 'live_scraped' ? (
+                          <Text style={styles.liveDotLabel}>· 🟢 LIVE</Text>
+                        ) : item.sourceKind === 'community_verified' ? (
                           <Text style={styles.liveDotLabel}>· 👥 Verified</Text>
+                        ) : (
+                          <Text style={styles.estDotLabel}>· Est.</Text>
                         )}
                         <TouchableOpacity
                           onPress={() =>
@@ -1384,7 +1468,6 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                       </View>
                     </View>
 
-                    {/* Right Price Column */}
                     <View style={styles.priceRightCol}>
                       <Text style={styles.priceMainText}>
                         <Text style={styles.rupeeSuperscript}>₹</Text>
@@ -1396,7 +1479,6 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                     </View>
                   </View>
 
-                  {/* Expandable Fare Breakdown Drawer */}
                   {isExpanded && (
                     <View style={styles.breakdownDrawer}>
                       <View style={styles.breakdownRow}>
@@ -1446,7 +1528,6 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   )}
                 </TouchableOpacity>
 
-                {/* Insert AI Price Insight & 60m Forecast Banner after 2nd card (like BuyHatke's inline card in f_07) */}
                 {idx === 1 && (
                   <TouchableOpacity
                     style={styles.aiCard}
@@ -1460,7 +1541,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                         </Text>
                         {!aiLoading && aiInsight && (
                           <Text style={styles.aiConfidence}>
-                            {aiInsight. advice}
+                            {aiInsight.advice}
                           </Text>
                         )}
                       </View>
@@ -1503,7 +1584,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           <View style={{ height: 96 }} />
         </ScrollView>
 
-        {/* Sticky Bottom "Book Ride" Bar (BuyHatke f_07 & f_08) */}
+        {/* Sticky Bottom "Book Ride" Bar */}
         <View style={styles.stickyBottomBar}>
           <TouchableOpacity
             style={[
@@ -1523,7 +1604,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         </View>
       </View>
 
-      {/* BuyHatke Sheet 1: "Confirm your ride" (f_09) */}
+      {/* BuyHatke Sheet 1: "Confirm your ride" */}
       <Modal
         visible={confirmRideSheetVisible}
         transparent
@@ -1540,7 +1621,8 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
 
             <View style={styles.sheetRoutePill}>
               <Text style={styles.sheetRoutePillText} numberOfLines={1}>
-                📍 {(smartPickupEnabled && smartPickup
+                📍{' '}
+                {(smartPickupEnabled && smartPickup
                   ? smartPickup.pickupLabel
                   : pickup.address
                 ).split(',')[0]}{' '}
@@ -1591,7 +1673,6 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
               </View>
             )}
 
-            {/* Payment Method Selector Trigger (f_10) */}
             <TouchableOpacity
               style={styles.paymentSelectorRow}
               onPress={() => {
@@ -1607,11 +1688,26 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             </TouchableOpacity>
 
             <View style={styles.estimatedPriceRow}>
-              <Text style={styles.estimatedPriceLabel}>Estimated Price</Text>
+              <Text style={styles.estimatedPriceLabel}>
+                {selectedRide?.sourceKind === 'live_scraped'
+                  ? 'Live Session Price'
+                  : 'Estimated Price'}
+              </Text>
               <Text style={styles.estimatedPriceValue}>
                 ₹{selectedRide?.price ?? 0}
               </Text>
             </View>
+
+            {selectedRide?.linkId && Platform.OS !== 'web' && (
+              <TouchableOpacity
+                style={styles.inAppWebViewBookBtn}
+                onPress={() => handleConfirmRideBooking('in_app_webview')}
+              >
+                <Text style={styles.inAppWebViewBookText}>
+                  ⚡ Book Inside FareSnap WebView ({selectedRide.providerName})
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <View style={styles.sheetButtonsRow}>
               <TouchableOpacity
@@ -1622,16 +1718,18 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.sheetConfirmBlackBtn}
-                onPress={handleConfirmRideBooking}
+                onPress={() => handleConfirmRideBooking('native_app')}
               >
-                <Text style={styles.sheetConfirmWhiteText}>Confirm</Text>
+                <Text style={styles.sheetConfirmWhiteText}>
+                  Open {selectedRide?.providerName || 'App'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* BuyHatke Sheet 2: "Payment Options" (f_10) */}
+      {/* BuyHatke Sheet 2: "Payment Options" */}
       <Modal
         visible={paymentSheetVisible}
         transparent
@@ -1705,7 +1803,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         </View>
       </Modal>
 
-      {/* BuyHatke Sheet 3: "Finding your ride" -> "Pickup in 2 Min" -> "Ride Completed Savings" (f_11, f_12, f_14) */}
+      {/* BuyHatke Sheet 3: "Finding your ride" -> "Pickup in 2 Min" -> "Ride Completed" */}
       <Modal
         visible={bookingPhase !== 'idle'}
         transparent
@@ -1734,7 +1832,10 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   Mins | {activeDistanceKm} KM
                 </Text>
                 <TouchableOpacity
-                  style={[styles.sheetCancelBtn, { width: '100%', marginTop: 20 }]}
+                  style={[
+                    styles.sheetCancelBtn,
+                    { width: '100%', marginTop: 20 },
+                  ]}
                   onPress={() => setBookingPhase('idle')}
                 >
                   <Text style={styles.sheetCancelText}>Cancel</Text>
@@ -1781,7 +1882,9 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   style={styles.optionalFareInput}
                   keyboardType="numeric"
                   maxLength={5}
-                  placeholder={`Optional: Enter exact ₹ seen in ${selectedRide?.providerName ?? 'app'}`}
+                  placeholder={`Optional: Enter exact ₹ seen in ${
+                    selectedRide?.providerName ?? 'app'
+                  }`}
                   placeholderTextColor="#94a3b8"
                   value={fareInput}
                   onChangeText={setFareInput}
@@ -1819,21 +1922,53 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* BuyHatke Link Apps Modal (f_01) */}
+      {/* BuyHatke Link Apps & In-WebView Booking Modal */}
       <LinkAppsModal
         visible={linkModalVisible}
         linkedMap={linkedProviders}
+        initialProviderId={linkModalInitialProvider}
+        routeOpts={
+          activePickupCoords && resolvedDropCoords
+            ? {
+                pickupLat: activePickupCoords.lat,
+                pickupLng: activePickupCoords.lng,
+                pickupAddress:
+                  smartPickupEnabled && smartPickup
+                    ? smartPickup.pickupLabel
+                    : pickup.address,
+                dropLat: resolvedDropCoords.lat,
+                dropLng: resolvedDropCoords.lng,
+                dropAddress: destination.address,
+                autoSelectProduct: linkModalAutoBookProduct,
+              }
+            : undefined
+        }
         onToggleLink={async (id, linked) => {
           const next = await setProviderLinked(id, linked);
           setLinkedProviders(next);
+          if (linked) {
+            setProviderAuthExpired((prev) => ({ ...prev, [id]: false }));
+          }
         }}
-        onInterceptedFares={(providerId, fares) => {
-          setInterceptedLiveFares((prev) => ({
+        onLiveProductsScraped={(providerId, products) => {
+          setScrapedLiveProducts((prev) => ({
             ...prev,
-            [providerId]: fares,
+            [providerId]: products,
+          }));
+          setProviderAuthExpired((prev) => ({
+            ...prev,
+            [providerId]: false,
           }));
         }}
-        onClose={() => setLinkModalVisible(false)}
+        onClose={() => {
+          const wasBooking = Boolean(linkModalAutoBookProduct);
+          setLinkModalVisible(false);
+          setLinkModalInitialProvider(null);
+          setLinkModalAutoBookProduct(undefined);
+          if (wasBooking) {
+            setBookingPhase('completed');
+          }
+        }}
       />
     </>
   );
@@ -1876,7 +2011,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
 
-  // Skeleton Screen (f_06)
+  // Skeleton Screen
   skeletonScreen: {
     flex: 1,
     backgroundColor: '#f8fafc',
@@ -1948,7 +2083,7 @@ const styles = StyleSheet.create({
     lineHeight: 28,
   },
 
-  // Top Controls Panel (f_07)
+  // Top Controls Panel
   topControlsPanel: {
     backgroundColor: '#f8fafc',
     paddingHorizontal: 16,
@@ -2013,6 +2148,36 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#166534',
   },
+  linkBannerPrompt: {
+    backgroundColor: '#eef2ff',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  linkBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4338ca',
+    textAlign: 'center',
+  },
+  expiredBannerPrompt: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+  },
+  expiredBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400e',
+    textAlign: 'center',
+  },
   sortHeaderBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2040,7 +2205,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Ride Option Cards (f_07 & f_08)
+  // Ride Option Cards
   scroll: {
     flex: 1,
   },
@@ -2127,7 +2292,12 @@ const styles = StyleSheet.create({
   liveDotLabel: {
     fontSize: 11,
     color: '#16a34a',
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  estDotLabel: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '500',
   },
   detailsToggleBtn: {
     marginLeft: 6,
@@ -2246,7 +2416,7 @@ const styles = StyleSheet.create({
     color: '#15803d',
   },
 
-  // Sticky Bottom "Book Ride" Bar (f_07 & f_08)
+  // Sticky Bottom "Book Ride" Bar
   stickyBottomBar: {
     position: 'absolute',
     bottom: 0,
@@ -2273,7 +2443,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Bottom Sheets (f_09, f_10, f_11, f_12, f_14)
+  // Bottom Sheets
   sheetOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.55)',
@@ -2383,7 +2553,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
     paddingHorizontal: 4,
   },
   estimatedPriceLabel: {
@@ -2395,6 +2565,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#0f172a',
+  },
+  inAppWebViewBookBtn: {
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    borderRadius: 24,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  inAppWebViewBookText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#4338ca',
   },
   sheetButtonsRow: {
     flexDirection: 'row',
@@ -2425,7 +2609,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
 
-  // Payment Options Sheet (f_10)
+  // Payment Options Sheet
   paymentOptionCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2479,7 +2663,7 @@ const styles = StyleSheet.create({
     transform: [{ translateX: 20 }],
   },
 
-  // Booking Phase & Ride Completed Savings (f_11, f_12, f_14)
+  // Booking Phase & Ride Completed Savings
   phaseCenterBox: {
     alignItems: 'center',
     paddingVertical: 10,
