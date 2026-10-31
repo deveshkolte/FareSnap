@@ -16,6 +16,11 @@ import {
 import { ConfirmPickupMapModal } from '../components/ConfirmPickupMapModal';
 import { LinkAppsModal } from '../components/LinkAppsModal';
 import {
+  CityKey,
+  detectCityFromCoords,
+  normalizeCityName,
+} from '../utils/cityDetector';
+import {
   getLinkedProviders,
   LinkableProviderId,
   setProviderLinked,
@@ -24,6 +29,13 @@ import {
   looksLikeMapsLinkOrCoords,
   resolveMapsLinkOrCoords,
 } from '../utils/mapsLinkParser';
+import {
+  CITY_DIRECTORY,
+  getPopularCitySuggestions,
+  getQuickHubForCity,
+  PlaceSuggestion,
+  searchPlacesAutocomplete,
+} from '../utils/placeAutocompleteEngine';
 
 type LocationData = {
   lat?: number;
@@ -41,145 +53,51 @@ type RouteHistory = {
   timestamp: number;
 };
 
-type Suggestion = {
-  name: string;
-  full: string;
-  lat: number;
-  lng: number;
-};
-
 const HISTORY_KEY = 'faresnap_route_history';
+const ACTIVE_CITY_KEY = 'faresnap_active_city_v1';
 const MAX_HISTORY = 5;
-const INDIA_BBOX = '68.1,6.5,97.4,35.7';
 
-const POPULAR_HUBS: { label: string; icon: string; query: string }[] = [
-  { label: 'Airport', icon: '✈️', query: 'International Airport' },
-  { label: 'Railway Station', icon: '🚉', query: 'Railway Station Junction' },
-  { label: 'Metro Station', icon: '🚇', query: 'Metro Station' },
-  { label: 'Tech Park', icon: '🏢', query: 'IT Tech Park' },
+const CITY_CHIP_ORDER: Exclude<CityKey, 'default'>[] = [
+  'bangalore',
+  'mumbai',
+  'delhi',
+  'hyderabad',
+  'pune',
+  'chennai',
+  'kolkata',
+  'ahmedabad',
+  'jaipur',
 ];
 
-const fetchSuggestions = async (
-  query: string,
-  signal?: AbortSignal
-): Promise<Suggestion[]> => {
-  const clean = query.trim();
-  if (clean.length < 3) return [];
-
-  const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
-  if (olaApiKey) {
-    try {
-      const olaUrl = `https://api.olamaps.io/places/v1/autocomplete?input=${encodeURIComponent(
-        clean
-      )}&api_key=${encodeURIComponent(olaApiKey)}`;
-      const res = await fetch(olaUrl, { signal });
-      if (res.ok) {
-        const data = await res.json();
-        const preds = data?.predictions;
-        if (Array.isArray(preds) && preds.length > 0) {
-          return preds
-            .filter((p: any) => p?.geometry?.location)
-            .slice(0, 5)
-            .map((p: any) => ({
-              name:
-                p.structured_formatting?.main_text ||
-                p.description?.split(',')[0] ||
-                clean,
-              full: p.description || clean,
-              lat: Number(p.geometry.location.lat),
-              lng: Number(p.geometry.location.lng),
-            }));
-        }
-      }
-    } catch {}
-  }
-
-  try {
-    const [photonRes, nomRes] = await Promise.allSettled([
-      fetch(
-        `https://photon.komoot.io/api/?q=${encodeURIComponent(
-          clean + ' India'
-        )}&bbox=${INDIA_BBOX}&limit=4&lang=en`,
-        { signal }
-      ).then((r) => r.json()),
-      fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-          clean
-        )}&countrycodes=in&format=json&addressdetails=1&limit=3`,
-        {
-          headers: {
-            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
-          },
-          signal,
-        }
-      ).then((r) => r.json()),
-    ]);
-
-    const combined: Suggestion[] = [];
-    const seenKeys = new Set<string>();
-
-    if (
-      nomRes.status === 'fulfilled' &&
-      Array.isArray(nomRes.value)
-    ) {
-      for (const item of nomRes.value) {
-        const lat = parseFloat(item.lat);
-        const lng = parseFloat(item.lon);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-        const name =
-          item.name ||
-          item.display_name?.split(',')[0]?.trim() ||
-          clean;
-        const full = item.display_name
-          ? item.display_name
-              .split(',')
-              .map((s: string) => s.trim())
-              .slice(0, 4)
-              .join(', ')
-          : name;
-        const key = `${name.toLowerCase()}:${lat.toFixed(2)},${lng.toFixed(2)}`;
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          combined.push({ name, full, lat, lng });
-        }
-      }
-    }
-
-    if (
-      photonRes.status === 'fulfilled' &&
-      Array.isArray(photonRes.value?.features)
-    ) {
-      for (const f of photonRes.value.features) {
-        const p = f.properties || {};
-        const parts = [p.name, p.street, p.city, p.state].filter(Boolean);
-        const name = p.name || parts[0] || clean;
-        const full = parts.join(', ') || clean;
-        const lat = f.geometry.coordinates[1];
-        const lng = f.geometry.coordinates[0];
-        const key = `${name.toLowerCase()}:${lat.toFixed(2)},${lng.toFixed(2)}`;
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          combined.push({ name, full, lat, lng });
-        }
-      }
-    }
-
-    return combined.slice(0, 5);
-  } catch {
-    return [];
-  }
-};
+const POPULAR_HUBS: {
+  label: 'Airport' | 'Railway Station' | 'Metro Station' | 'Tech Park';
+  icon: string;
+}[] = [
+  { label: 'Airport', icon: '✈️' },
+  { label: 'Railway Station', icon: '🚉' },
+  { label: 'Metro Station', icon: '🚇' },
+  { label: 'Tech Park', icon: '🏢' },
+];
 
 export default function LocationScreen() {
   const router = useRouter();
+  const [activeCity, setActiveCity] =
+    useState<Exclude<CityKey, 'default'>>('bangalore');
+  const [gpsCoords, setGpsCoords] = useState<
+    { lat: number; lng: number } | undefined
+  >(undefined);
   const [pickup, setPickup] = useState<LocationData>({ address: '' });
   const [drop, setDrop] = useState<LocationData>({ address: '' });
   const [loading, setLoading] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [history, setHistory] = useState<RouteHistory[]>([]);
-  const [pickupSuggestions, setPickupSuggestions] = useState<Suggestion[]>([]);
-  const [dropSuggestions, setDropSuggestions] = useState<Suggestion[]>([]);
-  const [activeField, setActiveField] = useState<'pickup' | 'drop' | null>(null);
+  const [pickupSuggestions, setPickupSuggestions] = useState<PlaceSuggestion[]>(
+    []
+  );
+  const [dropSuggestions, setDropSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [activeField, setActiveField] = useState<'pickup' | 'drop' | null>(
+    null
+  );
 
   // BuyHatke modals: Confirm Pickup Map (f_05) & Link Apps (f_01)
   const [confirmMapVisible, setConfirmMapVisible] = useState(false);
@@ -199,7 +117,7 @@ export default function LocationScreen() {
   const dropAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    loadHistory();
+    loadInitialContext();
     getLinkedProviders().then(setLinkedProviders).catch(() => {});
     return () => {
       if (pickupTimer.current) clearTimeout(pickupTimer.current);
@@ -209,11 +127,108 @@ export default function LocationScreen() {
     };
   }, []);
 
-  const loadHistory = async () => {
+  const loadInitialContext = async () => {
     try {
-      const raw = await AsyncStorage.getItem(HISTORY_KEY);
-      if (raw) setHistory(JSON.parse(raw));
+      const [rawHistory, savedCity] = await Promise.all([
+        AsyncStorage.getItem(HISTORY_KEY),
+        AsyncStorage.getItem(ACTIVE_CITY_KEY),
+      ]);
+      if (rawHistory) {
+        const parsed: RouteHistory[] = JSON.parse(rawHistory);
+        setHistory(parsed);
+        if (parsed[0]?.pickupLat && parsed[0]?.pickupLng) {
+          const histCity = detectCityFromCoords(
+            parsed[0].pickupLat,
+            parsed[0].pickupLng
+          );
+          if (histCity !== 'default') {
+            setActiveCity(histCity);
+          }
+        }
+      }
+      if (savedCity && savedCity in CITY_DIRECTORY) {
+        setActiveCity(savedCity as Exclude<CityKey, 'default'>);
+      }
+
+      // Silently check last known GPS position if permission was already granted
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status === Location.PermissionStatus.GRANTED) {
+        const lastPos = await Location.getLastKnownPositionAsync();
+        if (lastPos) {
+          const coords = {
+            lat: lastPos.coords.latitude,
+            lng: lastPos.coords.longitude,
+          };
+          setGpsCoords(coords);
+          const detected = detectCityFromCoords(coords.lat, coords.lng);
+          if (detected !== 'default') {
+            setActiveCity(detected);
+            await AsyncStorage.setItem(ACTIVE_CITY_KEY, detected);
+          }
+        }
+      }
     } catch {}
+  };
+
+  const handleSelectCityChip = async (
+    cityKey: Exclude<CityKey, 'default'>
+  ) => {
+    setActiveCity(cityKey);
+    try {
+      await AsyncStorage.setItem(ACTIVE_CITY_KEY, cityKey);
+    } catch {}
+
+    // Refresh default suggestions if an input is focused
+    if (activeField === 'pickup' && pickup.address.trim().length < 2) {
+      setPickupSuggestions(getPopularCitySuggestions(cityKey));
+    } else if (activeField === 'drop' && drop.address.trim().length < 2) {
+      const anchor =
+        pickup.lat && pickup.lng
+          ? { lat: pickup.lat, lng: pickup.lng }
+          : CITY_DIRECTORY[cityKey].center;
+      setDropSuggestions(getPopularCitySuggestions(cityKey, anchor));
+    }
+  };
+
+  // Anchor coordinates for autocomplete:
+  // - For Drop: always anchor to selected Pickup coordinates first, then GPS, then City center
+  // - For Pickup: anchor to GPS if in same city, otherwise City center
+  const getAnchorForField = (
+    field: 'pickup' | 'drop',
+    cityOverride?: Exclude<CityKey, 'default'>
+  ): { lat: number; lng: number } => {
+    const cKey = cityOverride ?? activeCity;
+    if (
+      field === 'drop' &&
+      typeof pickup.lat === 'number' &&
+      typeof pickup.lng === 'number'
+    ) {
+      return { lat: pickup.lat, lng: pickup.lng };
+    }
+    if (gpsCoords && detectCityFromCoords(gpsCoords.lat, gpsCoords.lng) === cKey) {
+      return gpsCoords;
+    }
+    return CITY_DIRECTORY[cKey].center;
+  };
+
+  const syncCityFromLocation = (loc: {
+    address: string;
+    lat?: number;
+    lng?: number;
+  }): Exclude<CityKey, 'default'> => {
+    const byCoords = detectCityFromCoords(loc.lat, loc.lng);
+    if (byCoords !== 'default') {
+      setActiveCity(byCoords);
+      AsyncStorage.setItem(ACTIVE_CITY_KEY, byCoords).catch(() => {});
+      return byCoords;
+    }
+    const byText = normalizeCityName(loc.address);
+    if (byText !== 'default') {
+      setActiveCity(byText);
+      AsyncStorage.setItem(ACTIVE_CITY_KEY, byText).catch(() => {});
+      return byText;
+    }
+    return activeCity;
   };
 
   const saveToHistory = async (pickupLoc: LocationData, destLoc: LocationData) => {
@@ -245,18 +260,21 @@ export default function LocationScreen() {
   };
 
   const applyHistory = (entry: RouteHistory) => {
-    setPickup({
+    const pLoc = {
       address: entry.pickup,
       lat: entry.pickupLat,
       lng: entry.pickupLng,
-    });
+    };
+    setPickup(pLoc);
     setDrop({
       address: entry.destination,
       lat: entry.destLat,
       lng: entry.destLng,
     });
+    syncCityFromLocation(pLoc);
     setPickupSuggestions([]);
     setDropSuggestions([]);
+    setActiveField(null);
   };
 
   const clearHistory = async () => {
@@ -270,8 +288,27 @@ export default function LocationScreen() {
     const tempPickup = { ...pickup };
     setPickup({ ...drop });
     setDrop(tempPickup);
+    syncCityFromLocation(drop);
     setPickupSuggestions([]);
     setDropSuggestions([]);
+  };
+
+  const onPickupFocus = () => {
+    setActiveField('pickup');
+    if (pickup.address.trim().length < 2) {
+      setPickupSuggestions(
+        getPopularCitySuggestions(activeCity, getAnchorForField('pickup'))
+      );
+    }
+  };
+
+  const onDropFocus = () => {
+    setActiveField('drop');
+    if (drop.address.trim().length < 2) {
+      setDropSuggestions(
+        getPopularCitySuggestions(activeCity, getAnchorForField('drop'))
+      );
+    }
   };
 
   const onPickupChange = (text: string) => {
@@ -279,16 +316,21 @@ export default function LocationScreen() {
     setActiveField('pickup');
     if (pickupTimer.current) clearTimeout(pickupTimer.current);
     if (pickupAbortRef.current) pickupAbortRef.current.abort();
-    if (text.trim().length < 3) {
-      setPickupSuggestions([]);
+
+    const clean = text.trim();
+    if (clean.length < 2) {
+      setPickupSuggestions(
+        getPopularCitySuggestions(activeCity, getAnchorForField('pickup'))
+      );
       return;
     }
 
-    if (looksLikeMapsLinkOrCoords(text)) {
+    if (looksLikeMapsLinkOrCoords(clean)) {
       pickupTimer.current = setTimeout(async () => {
-        const resolved = await resolveMapsLinkOrCoords(text);
+        const resolved = await resolveMapsLinkOrCoords(clean);
         if (resolved) {
           setPickup(resolved);
+          syncCityFromLocation(resolved);
           setPickupSuggestions([]);
           setActiveField(null);
         }
@@ -299,11 +341,16 @@ export default function LocationScreen() {
     pickupTimer.current = setTimeout(async () => {
       const controller = new AbortController();
       pickupAbortRef.current = controller;
-      const results = await fetchSuggestions(text, controller.signal);
+      const results = await searchPlacesAutocomplete({
+        query: clean,
+        activeCity,
+        anchorCoords: getAnchorForField('pickup'),
+        signal: controller.signal,
+      });
       if (!controller.signal.aborted) {
         setPickupSuggestions(results);
       }
-    }, 350);
+    }, 240);
   };
 
   const onDropChange = (text: string) => {
@@ -311,14 +358,18 @@ export default function LocationScreen() {
     setActiveField('drop');
     if (dropTimer.current) clearTimeout(dropTimer.current);
     if (dropAbortRef.current) dropAbortRef.current.abort();
-    if (text.trim().length < 3) {
-      setDropSuggestions([]);
+
+    const clean = text.trim();
+    if (clean.length < 2) {
+      setDropSuggestions(
+        getPopularCitySuggestions(activeCity, getAnchorForField('drop'))
+      );
       return;
     }
 
-    if (looksLikeMapsLinkOrCoords(text)) {
+    if (looksLikeMapsLinkOrCoords(clean)) {
       dropTimer.current = setTimeout(async () => {
-        const resolved = await resolveMapsLinkOrCoords(text);
+        const resolved = await resolveMapsLinkOrCoords(clean);
         if (resolved) {
           setDrop(resolved);
           setDropSuggestions([]);
@@ -331,32 +382,52 @@ export default function LocationScreen() {
     dropTimer.current = setTimeout(async () => {
       const controller = new AbortController();
       dropAbortRef.current = controller;
-      const results = await fetchSuggestions(text, controller.signal);
+      const results = await searchPlacesAutocomplete({
+        query: clean,
+        activeCity,
+        anchorCoords: getAnchorForField('drop'),
+        signal: controller.signal,
+      });
       if (!controller.signal.aborted) {
         setDropSuggestions(results);
       }
-    }, 350);
+    }, 240);
   };
 
-  const selectPickup = (s: Suggestion) => {
-    setPickup({ address: s.full, lat: s.lat, lng: s.lng });
+  const selectPickup = (s: PlaceSuggestion) => {
+    const nextPickup = { address: s.full, lat: s.lat, lng: s.lng };
+    setPickup(nextPickup);
+    const detectedCity = syncCityFromLocation(nextPickup);
     setPickupSuggestions([]);
-    setActiveField(null);
+    // Automatically focus Drop and show popular destinations in the same city if Drop is empty
+    if (!drop.address.trim()) {
+      setActiveField('drop');
+      setDropSuggestions(
+        getPopularCitySuggestions(detectedCity, { lat: s.lat, lng: s.lng })
+      );
+    } else {
+      setActiveField(null);
+    }
   };
 
-  const selectDrop = (s: Suggestion) => {
+  const selectDrop = (s: PlaceSuggestion) => {
     setDrop({ address: s.full, lat: s.lat, lng: s.lng });
     setDropSuggestions([]);
     setActiveField(null);
   };
 
-  const handleQuickHubPress = (hubQuery: string) => {
-    const cityHint = pickup.address.split(',').slice(-2, -1)[0]?.trim() || '';
-    const fullQuery = cityHint ? `${hubQuery}, ${cityHint}` : hubQuery;
+  const handleQuickHubPress = (
+    hubLabel: 'Airport' | 'Railway Station' | 'Metro Station' | 'Tech Park'
+  ) => {
+    const hubPlace = getQuickHubForCity(
+      activeCity,
+      hubLabel,
+      getAnchorForField(pickup.address.trim() ? 'drop' : 'pickup')
+    );
     if (!pickup.address.trim()) {
-      onPickupChange(fullQuery);
+      selectPickup(hubPlace);
     } else {
-      onDropChange(fullQuery);
+      selectDrop(hubPlace);
     }
   };
 
@@ -372,6 +443,7 @@ export default function LocationScreen() {
         accuracy: Location.Accuracy.Balanced,
       });
       const { latitude, longitude } = position.coords;
+      setGpsCoords({ lat: latitude, lng: longitude });
       let addressString = '';
 
       try {
@@ -406,13 +478,15 @@ export default function LocationScreen() {
         } catch {}
       }
 
-      setPickup({
+      const nextPickup: LocationData = {
         lat: latitude,
         lng: longitude,
         address:
           addressString ||
           `Current Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
-      });
+      };
+      setPickup(nextPickup);
+      syncCityFromLocation(nextPickup);
       setPickupSuggestions([]);
     } catch {
       Alert.alert('Error', 'Failed to get current location.');
@@ -454,14 +528,44 @@ export default function LocationScreen() {
         typeof resolvedPickup.lat !== 'number' ||
         typeof resolvedPickup.lng !== 'number'
       ) {
-        const suggestions = await fetchSuggestions(cleanPickup);
-        if (suggestions.length > 0) {
+        const pSuggestions = await searchPlacesAutocomplete({
+          query: cleanPickup,
+          activeCity,
+          anchorCoords: getAnchorForField('pickup'),
+        });
+        if (pSuggestions.length > 0) {
           resolvedPickup = {
-            address: cleanPickup,
-            lat: suggestions[0].lat,
-            lng: suggestions[0].lng,
+            address: pSuggestions[0].full,
+            lat: pSuggestions[0].lat,
+            lng: pSuggestions[0].lng,
           };
           setPickup(resolvedPickup);
+          syncCityFromLocation(resolvedPickup);
+        }
+      }
+
+      let resolvedDrop = { ...drop };
+      if (
+        typeof resolvedDrop.lat !== 'number' ||
+        typeof resolvedDrop.lng !== 'number'
+      ) {
+        const dropAnchor =
+          typeof resolvedPickup.lat === 'number' &&
+          typeof resolvedPickup.lng === 'number'
+            ? { lat: resolvedPickup.lat, lng: resolvedPickup.lng }
+            : getAnchorForField('drop');
+        const dSuggestions = await searchPlacesAutocomplete({
+          query: cleanDrop,
+          activeCity,
+          anchorCoords: dropAnchor,
+        });
+        if (dSuggestions.length > 0) {
+          resolvedDrop = {
+            address: dSuggestions[0].full,
+            lat: dSuggestions[0].lat,
+            lng: dSuggestions[0].lng,
+          };
+          setDrop(resolvedDrop);
         }
       }
 
@@ -471,7 +575,7 @@ export default function LocationScreen() {
       ) {
         setConfirmMapVisible(true);
       } else {
-        await proceedToResults(resolvedPickup, drop);
+        await proceedToResults(resolvedPickup, resolvedDrop);
       }
     } finally {
       setComparing(false);
@@ -534,6 +638,40 @@ export default function LocationScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* Active City Selector Strip (Locks Autocomplete to Your City) */}
+        <View style={styles.cityStripSection}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.cityStripScroll}
+          >
+            {CITY_CHIP_ORDER.map((cKey) => {
+              const isSelected = cKey === activeCity;
+              return (
+                <TouchableOpacity
+                  key={cKey}
+                  style={[
+                    styles.cityChip,
+                    isSelected && styles.cityChipActive,
+                  ]}
+                  onPress={() => handleSelectCityChip(cKey)}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.cityChipText,
+                      isSelected && styles.cityChipTextActive,
+                    ]}
+                  >
+                    {isSelected ? '📍 ' : ''}
+                    {CITY_DIRECTORY[cKey].label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
         {/* BuyHatke-style Route Card (f_02 - f_04) */}
         <View style={styles.routeCard}>
           {/* Pickup row */}
@@ -546,18 +684,20 @@ export default function LocationScreen() {
                     styles.input,
                     activeField === 'pickup' && styles.inputFocused,
                   ]}
-                  placeholder="Where from?"
+                  placeholder={`Pickup in ${CITY_DIRECTORY[activeCity].label}...`}
                   placeholderTextColor="#94a3b8"
                   value={pickup.address}
                   onChangeText={onPickupChange}
-                  onFocus={() => setActiveField('pickup')}
+                  onFocus={onPickupFocus}
                 />
                 {pickup.address.length > 0 && (
                   <TouchableOpacity
                     style={styles.clearCircleBtn}
                     onPress={() => {
                       setPickup({ address: '' });
-                      setPickupSuggestions([]);
+                      setPickupSuggestions(
+                        getPopularCitySuggestions(activeCity)
+                      );
                     }}
                   >
                     <Text style={styles.clearCircleText}>✕</Text>
@@ -590,18 +730,23 @@ export default function LocationScreen() {
                     styles.input,
                     activeField === 'drop' && styles.inputFocused,
                   ]}
-                  placeholder="Where to?"
+                  placeholder={`Where to in ${CITY_DIRECTORY[activeCity].label}?`}
                   placeholderTextColor="#94a3b8"
                   value={drop.address}
                   onChangeText={onDropChange}
-                  onFocus={() => setActiveField('drop')}
+                  onFocus={onDropFocus}
                 />
                 {drop.address.length > 0 && (
                   <TouchableOpacity
                     style={styles.clearCircleBtn}
                     onPress={() => {
                       setDrop({ address: '' });
-                      setDropSuggestions([]);
+                      setDropSuggestions(
+                        getPopularCitySuggestions(
+                          activeCity,
+                          getAnchorForField('drop')
+                        )
+                      );
                     }}
                   >
                     <Text style={styles.clearCircleText}>✕</Text>
@@ -615,19 +760,38 @@ export default function LocationScreen() {
         {/* Pickup suggestions */}
         {pickupSuggestions.length > 0 && activeField === 'pickup' && (
           <View style={styles.suggestionsCard}>
+            <Text style={styles.suggestionsHeaderLabel}>
+              {pickup.address.trim().length < 2
+                ? `Popular Pickups in ${CITY_DIRECTORY[activeCity].label}`
+                : `${CITY_DIRECTORY[activeCity].label} Suggestions`}
+            </Text>
             {pickupSuggestions.map((s, i) => (
               <TouchableOpacity
-                key={i}
+                key={`${s.name}_${i}`}
                 style={[
                   styles.suggestionItem,
                   i < pickupSuggestions.length - 1 && styles.suggestionBorder,
                 ]}
                 onPress={() => selectPickup(s)}
               >
-                <Text style={styles.suggestionName}>📍 {s.name}</Text>
-                <Text style={styles.suggestionFull} numberOfLines={1}>
-                  {s.full}
-                </Text>
+                <View style={styles.suggestionRow}>
+                  <View style={styles.suggestionIconCol}>
+                    <Text style={styles.suggestionIcon}>{s.categoryIcon}</Text>
+                    {typeof s.distanceKm === 'number' && (
+                      <Text style={styles.suggestionDistText}>
+                        {s.distanceKm} km
+                      </Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestionName} numberOfLines={1}>
+                      {s.name}
+                    </Text>
+                    <Text style={styles.suggestionFull} numberOfLines={1}>
+                      {s.subtitle}
+                    </Text>
+                  </View>
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -636,19 +800,42 @@ export default function LocationScreen() {
         {/* Drop suggestions */}
         {dropSuggestions.length > 0 && activeField === 'drop' && (
           <View style={styles.suggestionsCard}>
+            <Text style={styles.suggestionsHeaderLabel}>
+              {drop.address.trim().length < 2
+                ? `Popular Destinations in ${CITY_DIRECTORY[activeCity].label}`
+                : `Near ${
+                    pickup.address
+                      ? pickup.address.split(',')[0]
+                      : CITY_DIRECTORY[activeCity].label
+                  }`}
+            </Text>
             {dropSuggestions.map((s, i) => (
               <TouchableOpacity
-                key={i}
+                key={`${s.name}_${i}`}
                 style={[
                   styles.suggestionItem,
                   i < dropSuggestions.length - 1 && styles.suggestionBorder,
                 ]}
                 onPress={() => selectDrop(s)}
               >
-                <Text style={styles.suggestionName}>📍 {s.name}</Text>
-                <Text style={styles.suggestionFull} numberOfLines={1}>
-                  {s.full}
-                </Text>
+                <View style={styles.suggestionRow}>
+                  <View style={styles.suggestionIconCol}>
+                    <Text style={styles.suggestionIcon}>{s.categoryIcon}</Text>
+                    {typeof s.distanceKm === 'number' && (
+                      <Text style={styles.suggestionDistText}>
+                        {s.distanceKm} km
+                      </Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestionName} numberOfLines={1}>
+                      {s.name}
+                    </Text>
+                    <Text style={styles.suggestionFull} numberOfLines={1}>
+                      {s.subtitle}
+                    </Text>
+                  </View>
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -674,9 +861,11 @@ export default function LocationScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Quick Destination Hubs */}
+        {/* Quick Destination Hubs (Exact City Airport / Railway / Metro / Tech Park) */}
         <View style={styles.hubsSection}>
-          <Text style={styles.historyTitle}>Quick fill</Text>
+          <Text style={styles.historyTitle}>
+            Quick fill ({CITY_DIRECTORY[activeCity].label})
+          </Text>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -686,7 +875,7 @@ export default function LocationScreen() {
               <TouchableOpacity
                 key={hub.label}
                 style={styles.hubPill}
-                onPress={() => handleQuickHubPress(hub.query)}
+                onPress={() => handleQuickHubPress(hub.label)}
                 activeOpacity={0.75}
               >
                 <Text style={styles.hubPillText}>
@@ -754,8 +943,8 @@ export default function LocationScreen() {
       {/* BuyHatke Confirm Pickup Interactive Map Modal (f_05) */}
       <ConfirmPickupMapModal
         visible={confirmMapVisible}
-        initialLat={pickup.lat ?? 12.9352}
-        initialLng={pickup.lng ?? 77.6245}
+        initialLat={pickup.lat ?? CITY_DIRECTORY[activeCity].center.lat}
+        initialLng={pickup.lng ?? CITY_DIRECTORY[activeCity].center.lng}
         initialAddress={pickup.address}
         onCancel={() => setConfirmMapVisible(false)}
         onConfirm={(confirmed) => {
@@ -804,6 +993,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#4338ca',
+  },
+
+  // Active City Selector Strip
+  cityStripSection: {
+    marginBottom: 12,
+  },
+  cityStripScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  cityChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  cityChipActive: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#2563eb',
+  },
+  cityChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  cityChipTextActive: {
+    color: '#2563eb',
+    fontWeight: '700',
   },
 
   // BuyHatke Route Card
@@ -862,9 +1081,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   swapButtonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#475569',
+    color: '#334155',
   },
   inputWrapper: {
     flex: 1,
@@ -872,91 +1091,120 @@ const styles = StyleSheet.create({
   inputFieldRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
   },
   input: {
     flex: 1,
     fontSize: 16,
     color: '#0f172a',
     fontWeight: '500',
-    paddingVertical: 6,
+    paddingVertical: 8,
   },
   inputFocused: {
-    backgroundColor: '#e0e7ff',
-    borderRadius: 8,
-    paddingHorizontal: 8,
+    color: '#0f172a',
   },
   clearCircleBtn: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#64748b',
+    backgroundColor: '#cbd5e1',
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
   },
   clearCircleText: {
     fontSize: 11,
-    color: '#64748b',
     fontWeight: '700',
+    color: '#334155',
   },
 
-  // Suggestions
+  // Suggestions card
   suggestionsCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     marginBottom: 14,
     overflow: 'hidden',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  suggestionsHeaderLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 4,
+    backgroundColor: '#f8fafc',
   },
   suggestionItem: {
-    padding: 14,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
   },
   suggestionBorder: {
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
   },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  suggestionIconCol: {
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  suggestionIcon: {
+    fontSize: 18,
+  },
+  suggestionDistText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
+    marginTop: 2,
+  },
   suggestionName: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 2,
   },
   suggestionFull: {
     fontSize: 12,
     color: '#64748b',
+    marginTop: 2,
   },
 
-  // Current location
+  // Current Location
   currentLocationButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#eef2ff',
+    backgroundColor: '#f8fafc',
     borderRadius: 14,
-    padding: 14,
-    marginBottom: 20,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: '#c7d2fe',
-    gap: 8,
+    borderColor: '#e2e8f0',
+    marginBottom: 18,
   },
   currentLocationIcon: {
     fontSize: 16,
+    marginRight: 10,
   },
   currentLocationText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#4338ca',
-    flex: 1,
+    color: '#2563eb',
   },
 
   // Quick Hubs
   hubsSection: {
-    marginBottom: 20,
+    marginBottom: 18,
   },
   hubPill: {
     backgroundColor: '#f8fafc',
@@ -997,36 +1245,39 @@ const styles = StyleSheet.create({
   },
   chip: {
     backgroundColor: '#f8fafc',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 14,
     marginRight: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    maxWidth: 200,
+    maxWidth: 220,
   },
   chipText: {
-    color: '#0f172a',
     fontSize: 13,
     fontWeight: '600',
+    color: '#0f172a',
   },
   chipTime: {
-    color: '#94a3b8',
     fontSize: 11,
+    color: '#94a3b8',
     marginTop: 2,
   },
+
+  // Compare Button
   compareButton: {
     backgroundColor: '#4338ca',
     borderRadius: 28,
-    paddingVertical: 16,
+    paddingVertical: 17,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
   },
   compareButtonInactive: {
     backgroundColor: '#e2e8f0',
   },
   compareButtonDisabled: {
-    opacity: 0.6,
+    opacity: 0.7,
   },
   compareText: {
     color: '#ffffff',

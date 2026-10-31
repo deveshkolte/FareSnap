@@ -124,9 +124,27 @@ export const getRoadDistance = async (
   cityName?: string
 ): Promise<RoadDistanceResult | null> => {
   try {
-    const geocode = async (address: string): Promise<RouteCoords | null> => {
+    const geocode = async (
+      address: string,
+      biasCoords?: RouteCoords
+    ): Promise<RouteCoords | null> => {
       const trimmed = address.trim();
       const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
+      const d = 0.6;
+      const viewboxParam = biasCoords
+        ? `&viewbox=${(biasCoords.lng - d).toFixed(4)},${(
+            biasCoords.lat + d
+          ).toFixed(4)},${(biasCoords.lng + d).toFixed(4)},${(
+            biasCoords.lat - d
+          ).toFixed(4)}&bounded=1`
+        : '';
+      const photonBboxParam = biasCoords
+        ? `lat=${biasCoords.lat}&lon=${biasCoords.lng}&bbox=${(
+            biasCoords.lng - d
+          ).toFixed(4)},${(biasCoords.lat - d).toFixed(4)},${(
+            biasCoords.lng + d
+          ).toFixed(4)},${(biasCoords.lat + d).toFixed(4)}`
+        : 'bbox=68.1,6.5,97.4,35.7';
 
       // 1. Try Ola Maps Geocode if API key is configured
       if (olaApiKey) {
@@ -162,7 +180,7 @@ export const getRoadDistance = async (
         const nomQuery = cityName ? `${parts[0]}, ${cityName}` : trimmed;
         const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
           nomQuery
-        )}&countrycodes=in&format=json&limit=1`;
+        )}&countrycodes=in${viewboxParam}&format=json&limit=1`;
         const res = await fetch(nomUrl, {
           headers: {
             'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
@@ -196,7 +214,7 @@ export const getRoadDistance = async (
           const timeout = setTimeout(() => controller.abort(), 5000);
           const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(
             query
-          )}&bbox=68.1,6.5,97.4,35.7&limit=1&lang=en`;
+          )}&${photonBboxParam}&limit=1&lang=en`;
           const res = await fetch(url, { signal: controller.signal });
           clearTimeout(timeout);
           const data = await res.json();
@@ -221,7 +239,9 @@ export const getRoadDistance = async (
       await sleep(300);
     }
 
-    const dest = parsedDest.coords ?? (await geocode(parsedDest.address));
+    const dest =
+      parsedDest.coords ??
+      (await geocode(parsedDest.address, origin ?? undefined));
 
     if (!origin || !dest) {
       console.error('Geocoding failed for one or both addresses');
