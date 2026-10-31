@@ -466,7 +466,7 @@ function createServer() {
       const lanUrl = process.env.PHONE_WEB_URL || 'http://192.168.254.93:8090';
       const apkBuildUrl =
         process.env.EAS_APK_BUILD_URL ||
-        'https://expo.dev/accounts/devesh.kolte/projects/faresnap/builds/98dde0a5-6623-4383-a01e-eb6de749cccb';
+        'https://expo.dev/accounts/devesh.kolte/projects/faresnap/builds/62c4ec4f-a7f4-44ea-b269-b85dd2c32688';
       const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -512,7 +512,7 @@ function createServer() {
       <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
         apkBuildUrl
       )}" alt="EAS APK QR" />
-      <code>EAS Build #98dde0a5</code>
+      <code>EAS Build #62c4ec4f</code>
       <a class="btn btn-indigo" href="${apkBuildUrl}" target="_blank">Open APK Download Page →</a>
     </div>
   </div>
