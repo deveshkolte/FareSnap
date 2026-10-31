@@ -34,6 +34,7 @@ import {
   getPopularCitySuggestions,
   getQuickHubForCity,
   PlaceSuggestion,
+  resolveDynamicCityFromCoords,
   searchPlacesAutocomplete,
 } from '../utils/placeAutocompleteEngine';
 
@@ -83,6 +84,11 @@ export default function LocationScreen() {
   const router = useRouter();
   const [activeCity, setActiveCity] =
     useState<Exclude<CityKey, 'default'>>('bangalore');
+  const [customGpsCity, setCustomGpsCity] = useState<{
+    name: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
   const [gpsCoords, setGpsCoords] = useState<
     { lat: number; lng: number } | undefined
   >(undefined);
@@ -163,7 +169,20 @@ export default function LocationScreen() {
           const detected = detectCityFromCoords(coords.lat, coords.lng);
           if (detected !== 'default') {
             setActiveCity(detected);
+            setCustomGpsCity(null);
             await AsyncStorage.setItem(ACTIVE_CITY_KEY, detected);
+          } else {
+            const dyn = await resolveDynamicCityFromCoords(
+              coords.lat,
+              coords.lng
+            );
+            if (dyn.customCityName) {
+              setCustomGpsCity({
+                name: dyn.customCityName,
+                lat: coords.lat,
+                lng: coords.lng,
+              });
+            }
           }
         }
       }
@@ -173,6 +192,7 @@ export default function LocationScreen() {
   const handleSelectCityChip = async (
     cityKey: Exclude<CityKey, 'default'>
   ) => {
+    setCustomGpsCity(null);
     setActiveCity(cityKey);
     try {
       await AsyncStorage.setItem(ACTIVE_CITY_KEY, cityKey);
@@ -205,6 +225,9 @@ export default function LocationScreen() {
     ) {
       return { lat: pickup.lat, lng: pickup.lng };
     }
+    if (customGpsCity) {
+      return { lat: customGpsCity.lat, lng: customGpsCity.lng };
+    }
     if (gpsCoords && detectCityFromCoords(gpsCoords.lat, gpsCoords.lng) === cKey) {
       return gpsCoords;
     }
@@ -218,15 +241,30 @@ export default function LocationScreen() {
   }): Exclude<CityKey, 'default'> => {
     const byCoords = detectCityFromCoords(loc.lat, loc.lng);
     if (byCoords !== 'default') {
+      setCustomGpsCity(null);
       setActiveCity(byCoords);
       AsyncStorage.setItem(ACTIVE_CITY_KEY, byCoords).catch(() => {});
       return byCoords;
     }
     const byText = normalizeCityName(loc.address);
     if (byText !== 'default') {
+      setCustomGpsCity(null);
       setActiveCity(byText);
       AsyncStorage.setItem(ACTIVE_CITY_KEY, byText).catch(() => {});
       return byText;
+    }
+    if (typeof loc.lat === 'number' && typeof loc.lng === 'number') {
+      resolveDynamicCityFromCoords(loc.lat, loc.lng)
+        .then((dyn) => {
+          if (dyn.customCityName) {
+            setCustomGpsCity({
+              name: dyn.customCityName,
+              lat: loc.lat!,
+              lng: loc.lng!,
+            });
+          }
+        })
+        .catch(() => {});
     }
     return activeCity;
   };
@@ -345,6 +383,7 @@ export default function LocationScreen() {
         query: clean,
         activeCity,
         anchorCoords: getAnchorForField('pickup'),
+        customCityName: customGpsCity?.name,
         signal: controller.signal,
       });
       if (!controller.signal.aborted) {
@@ -386,6 +425,7 @@ export default function LocationScreen() {
         query: clean,
         activeCity,
         anchorCoords: getAnchorForField('drop'),
+        customCityName: customGpsCity?.name,
         signal: controller.signal,
       });
       if (!controller.signal.aborted) {
@@ -645,8 +685,18 @@ export default function LocationScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.cityStripScroll}
           >
+            {customGpsCity && (
+              <TouchableOpacity
+                style={[styles.cityChip, styles.cityChipActive]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.cityChipText, styles.cityChipTextActive]}>
+                  📍 {customGpsCity.name}
+                </Text>
+              </TouchableOpacity>
+            )}
             {CITY_CHIP_ORDER.map((cKey) => {
-              const isSelected = cKey === activeCity;
+              const isSelected = !customGpsCity && cKey === activeCity;
               return (
                 <TouchableOpacity
                   key={cKey}

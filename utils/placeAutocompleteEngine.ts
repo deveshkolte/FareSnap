@@ -610,14 +610,68 @@ export const getQuickHubForCity = (
 };
 
 /**
+ * Resolves any GPS coordinate across India into either one of the 9 metro CityKeys
+ * or a dynamic Tier-2 / Tier-3 city name via reverse geocoding.
+ */
+export const resolveDynamicCityFromCoords = async (
+  lat: number,
+  lng: number
+): Promise<{
+  metroKey: CityKey;
+  customCityName?: string;
+}> => {
+  const metro = detectCityFromCoords(lat, lng);
+  if (metro !== 'default') {
+    return { metroKey: metro };
+  }
+  try {
+    const [nomRes, photonRes] = await Promise.allSettled([
+      fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+        {
+          headers: {
+            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
+          },
+        }
+      ).then((r) => r.json()),
+      fetch(
+        `https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}&lang=en`
+      ).then((r) => r.json()),
+    ]);
+
+    if (nomRes.status === 'fulfilled' && nomRes.value?.address) {
+      const a = nomRes.value.address;
+      const cityName = a.city || a.town || a.county || a.state_district;
+      if (cityName && typeof cityName === 'string') {
+        return { metroKey: 'default', customCityName: cityName.trim() };
+      }
+    }
+
+    if (
+      photonRes.status === 'fulfilled' &&
+      photonRes.value?.features?.[0]?.properties
+    ) {
+      const p = photonRes.value.features[0].properties;
+      const cityName = p.city || p.town || p.county || p.district || p.name;
+      if (cityName && typeof cityName === 'string') {
+        return { metroKey: 'default', customCityName: cityName.trim() };
+      }
+    }
+  } catch {}
+  return { metroKey: 'default' };
+};
+
+/**
  * Uber / Ola / Rapido-grade location autocomplete engine.
  * Strictly biases and bounds suggestions to the user's active city & pickup coordinates
- * so searching a destination in Bengaluru never suggests places in Himachal Pradesh or 2,000km away.
+ * (including dynamic Tier-2/Tier-3 Indian cities via `customCityName` + `anchorCoords`)
+ * so searching a destination never suggests places in another state 2,000km away.
  */
 export const searchPlacesAutocomplete = async (opts: {
   query: string;
   activeCity: CityKey;
   anchorCoords?: { lat: number; lng: number };
+  customCityName?: string;
   signal?: AbortSignal;
 }): Promise<PlaceSuggestion[]> => {
   const clean = opts.query.trim();
@@ -625,6 +679,13 @@ export const searchPlacesAutocomplete = async (opts: {
 
   // Check if user explicitly typed a city name in the query itself
   const explicitQueryCity = normalizeCityName(clean);
+  const isCustomTier2City =
+    Boolean(opts.customCityName) &&
+    opts.anchorCoords &&
+    explicitQueryCity === 'default' &&
+    detectCityFromCoords(opts.anchorCoords.lat, opts.anchorCoords.lng) ===
+      'default';
+
   const targetCityKey: Exclude<CityKey, 'default'> =
     explicitQueryCity !== 'default'
       ? explicitQueryCity
@@ -641,6 +702,12 @@ export const searchPlacesAutocomplete = async (opts: {
           : 'bangalore';
 
   const cityMeta = CITY_DIRECTORY[targetCityKey];
+  const effectiveSearchCityName = isCustomTier2City
+    ? opts.customCityName!
+    : cityMeta.searchName;
+  const effectiveDisplayCityLabel = isCustomTier2City
+    ? opts.customCityName!
+    : cityMeta.label;
   const anchor =
     explicitQueryCity !== 'default' && explicitQueryCity !== opts.activeCity
       ? cityMeta.center
@@ -673,21 +740,23 @@ export const searchPlacesAutocomplete = async (opts: {
     });
   };
 
-  // 1. Instant Curated City Landmark & Neighborhood Matches (<1ms)
-  for (const lm of cityMeta.landmarks) {
-    const nameMatch = lm.name.toLowerCase().includes(lowerQuery);
-    const subMatch = lm.subtitle.toLowerCase().includes(lowerQuery);
-    const aliasMatch = lm.aliases?.some((a) => a.includes(lowerQuery));
-    if (nameMatch || subMatch || aliasMatch) {
-      pushCandidate({
-        name: lm.name,
-        subtitle: lm.subtitle,
-        full: `${lm.name}, ${lm.subtitle}`,
-        lat: lm.lat,
-        lng: lm.lng,
-        categoryIcon: lm.icon,
-        isMajorHub: true,
-      });
+  // 1. Instant Curated City Landmark & Neighborhood Matches (<1ms) when in a supported metro
+  if (!isCustomTier2City) {
+    for (const lm of cityMeta.landmarks) {
+      const nameMatch = lm.name.toLowerCase().includes(lowerQuery);
+      const subMatch = lm.subtitle.toLowerCase().includes(lowerQuery);
+      const aliasMatch = lm.aliases?.some((a) => a.includes(lowerQuery));
+      if (nameMatch || subMatch || aliasMatch) {
+        pushCandidate({
+          name: lm.name,
+          subtitle: lm.subtitle,
+          full: `${lm.name}, ${lm.subtitle}`,
+          lat: lm.lat,
+          lng: lm.lng,
+          categoryIcon: lm.icon,
+          isMajorHub: true,
+        });
+      }
     }
   }
 
@@ -710,9 +779,11 @@ export const searchPlacesAutocomplete = async (opts: {
   const nomViewbox = `${minLng},${maxLat},${maxLng},${minLat}`;
 
   const queryHasCity =
-    lowerQuery.includes(cityMeta.searchName.toLowerCase()) ||
-    lowerQuery.includes(cityMeta.label.toLowerCase());
-  const nomQuery = queryHasCity ? clean : `${clean}, ${cityMeta.searchName}`;
+    lowerQuery.includes(effectiveSearchCityName.toLowerCase()) ||
+    lowerQuery.includes(effectiveDisplayCityLabel.toLowerCase());
+  const nomQuery = queryHasCity
+    ? clean
+    : `${clean}, ${effectiveSearchCityName}`;
 
   try {
     const olaPromise = olaApiKey
