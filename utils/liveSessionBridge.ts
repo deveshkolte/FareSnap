@@ -53,8 +53,22 @@ export type LifetimeSavingsData = {
   lastTripSaved: number;
 };
 
+export type RideTripRecord = {
+  id: string;
+  timestamp: number;
+  pickup: string;
+  destination: string;
+  providerName: string;
+  productName: string;
+  category: 'Bike' | 'Auto' | 'Cab';
+  distanceKm: number;
+  pricePaid: number;
+  amountSaved: number;
+};
+
 const LINKED_PROVIDERS_KEY = 'faresnap_linked_providers_v2';
 const LIFETIME_SAVINGS_KEY = 'faresnap_lifetime_savings_v1';
+const TRIP_HISTORY_KEY = 'faresnap_trip_records_v1';
 
 export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
   {
@@ -637,7 +651,16 @@ export async function getLifetimeSavings(): Promise<LifetimeSavingsData> {
 }
 
 export async function recordTripSavings(
-  savedAmount: number
+  savedAmount: number,
+  tripMeta?: {
+    pickup: string;
+    destination: string;
+    providerName: string;
+    productName: string;
+    category: 'Bike' | 'Auto' | 'Cab';
+    distanceKm: number;
+    pricePaid: number;
+  }
 ): Promise<LifetimeSavingsData> {
   const current = await getLifetimeSavings();
   const cleanSaved = Math.max(0, Math.round(savedAmount * 100) / 100);
@@ -648,6 +671,36 @@ export async function recordTripSavings(
   };
   try {
     await AsyncStorage.setItem(LIFETIME_SAVINGS_KEY, JSON.stringify(updated));
+    if (tripMeta) {
+      const existing = await getRideTripHistory();
+      const newRecord: RideTripRecord = {
+        id: `trip_${Date.now()}`,
+        timestamp: Date.now(),
+        pickup: tripMeta.pickup,
+        destination: tripMeta.destination,
+        providerName: tripMeta.providerName,
+        productName: tripMeta.productName,
+        category: tripMeta.category,
+        distanceKm: tripMeta.distanceKm,
+        pricePaid: tripMeta.pricePaid,
+        amountSaved: cleanSaved,
+      };
+      await AsyncStorage.setItem(
+        TRIP_HISTORY_KEY,
+        JSON.stringify([newRecord, ...existing].slice(0, 50))
+      );
+    }
   } catch {}
   return updated;
+}
+
+export async function getRideTripHistory(): Promise<RideTripRecord[]> {
+  try {
+    const raw = await AsyncStorage.getItem(TRIP_HISTORY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
 }
