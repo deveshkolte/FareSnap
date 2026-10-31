@@ -2,13 +2,13 @@
 
 # FareSnap
 
-**Multi-Modal Ride & Metro Aggregator with Crowdsourced Surge Pooling and Rain-Radar Forecasting**
+**Pan-India Multi-Modal Ride & Metro Aggregator with Live ONDC/Provider Bridges, Rain-Radar Surge Forecasting & Spend Lens**
 
-[![React Native](https://img.shields.io/badge/React_Native-Expo-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Supabase](https://img.shields.io/badge/Supabase-Surge_Pooling-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com)
-[![ONDC Beckn](https://img.shields.io/badge/Protocol-ONDC_Beckn-10b981?style=flat-square)](#system-architecture)
-[![Download APK](https://img.shields.io/badge/Android_APK-Latest_Release-blue?style=flat-square&logo=android)](https://github.com/deveshkolte/FareSnap/releases/latest)
+[![React Native](https://img.shields.io/badge/Expo_SDK_58-React_Native_0.88-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Cloud Backend](https://img.shields.io/badge/Render_Cloud-ONDC_BAP_%26_AI_Proxy-4338ca?style=flat-square)](https://faresnap-ondc-bap-gateway.onrender.com/health)
+[![ONDC Beckn](https://img.shields.io/badge/Protocol-ONDC:TRV10_v2.0-10b981?style=flat-square)](#system-architecture--core-engines)
+[![Download APK](https://img.shields.io/badge/Android_APK-Latest_Release-2563eb?style=flat-square&logo=android)](https://github.com/deveshkolte/FareSnap/releases/latest)
 
 </div>
 
@@ -16,9 +16,12 @@
 
 ## Overview
 
-**FareSnap** is a cross-city mobile mobility aggregator built for **9 Indian cities** that compares real-time fares across **9 ride-hailing providers** (**Uber, Ola, Rapido, Namma Yatri, BluSmart, Meru, inDrive, Bharat Cab, and Savaari**) alongside **Multi-Modal Metro + Auto/Bike split-route combinations**.
+**FareSnap** is a Pan-India mobility comparison and booking engine built with **Expo SDK 58 & React Native** that compares real-time and calibrated fares across **9 ride-hailing providers** (**Uber, Ola, Rapido, Namma Yatri, InDrive, Bharat Cab, Meru, Savaari, and BluSmart**) and **20+ vehicle tiers** (`Bike`, `Auto`, `Cab`), alongside **Multi-Modal Metro + Auto/Bike split-route combinations**.
 
-Beyond fare comparison, FareSnap integrates **Waze-style crowdsourced neighborhood surge pooling** backed by Supabase, **60-minute rain-radar surge forecasting** via Open-Meteo, **ONDC Beckn protocol** quote adapters, and **Groq (`Llama-3.1-8B`)** fare decision insights with one-tap deep-link booking.
+Unlike static fare calculators, FareSnap combines:
+- **Live Provider & ONDC Bridges:** Direct **Namma Yatri (`api.moving.tech`)** OTP authentication, `/rideSearch` live quotes, and `/estimate/{id}/select2` in-app booking; **Rapido (`m.rapido.bike`)** `window.unupFe` PWA fare extraction; **ONDC Beckn (`ONDC:TRV10`)** BAP gateway (`ondc-test/server.js`); and hot-updatable **WebView `fetch`/`XHR`/DOM session scraping** for linked **Uber** and **Ola** accounts.
+- **City-Locked & Pickup-Anchored Pan-India Autocomplete:** Parallel **Curated City Hub Index (<1ms)** + **Ola Maps** + **Bounded Nominatim (`viewbox` + `bounded=1`)** + **Photon (`bbox` + coordinate bias)** with a strict 90 km Haversine cutoff and dynamic Tier-2/Tier-3 GPS city detection across India.
+- **Commuter Intelligence:** **OSRM step-junction Smart Pickup** (walk 100–250m past U-turns/signals to save ₹20–₹50 with an interactive Leaflet walking map), **Open-Meteo 15-minute rain-radar surge forecasting** with a 15m surge-drop countdown timer, **Waze-style crowdsourced surge pooling**, **Self-Learning EWMA Field Calibration**, **Commute Guard**, and **Spend Lens** analytics.
 
 ---
 
@@ -37,31 +40,35 @@ Beyond fare comparison, FareSnap integrates **Waze-style crowdsourced neighborho
 ## System Architecture & Core Engines
 
 ```text
-  [Pickup & Drop Input] ──► Multi-Engine Geocoder (Ola Maps + Nominatim India + Photon)
-                                       │
-                                       ▼
-                        OSRM Road Geometry & Live Traffic ETA
-                                       │
-         ┌─────────────────────────────┼─────────────────────────────┐
-         ▼                             ▼                             ▼
-  [Async QuoteEngine]       [Metro + Auto Split Engine]   [Live Surge Intelligence]
-  • ONDC Beckn Provider     • Haversine Station Search    • Supabase Fare Reporter
-  • Live Session Bridge     • First/Last-Mile Auto/Bike   • 15-Min Open-Meteo Radar
-  • 9-App City Tariffs      • Total Time & Cost Delta     • Groq Llama-3.1-8B Advice
+  [Pickup & Drop / Google Maps Link] ──► City-Locked Autocomplete Engine (utils/placeAutocompleteEngine.ts)
+                                         • Curated Metro Hubs + Parallel Ola Maps + Nominatim + Photon
+                                         • 90km Haversine Cutoff & Dynamic Tier-2/Tier-3 GPS City Detection
+                                                        │
+                                                        ▼
+                                  Parallel Ola Maps Traffic + OSRM (steps=true) Routing
+                                  • Road Distance, Signal/Intersection Count & Turn Delays
+                                                        │
+         ┌──────────────────────────────────────────────┼──────────────────────────────────────────────┐
+         ▼                                              ▼                                              ▼
+  [Live Provider & ONDC Bridges]             [Commuter Savings Engines]                     [Surge & Spend Intelligence]
+  • Namma Yatri Direct API (OTP + select2)   • Smart Pickup Junction Probe + Walking Map    • Open-Meteo 15m Rain Radar
+  • Rapido PWA (window.unupFe) Bridge        • Metro + First/Last-Mile Auto Split Engine    • Cloud Surge Pool + EWMA Calibration
+  • ONDC:TRV10 BAP Server + WebView Pool     • Commute Guard & 15m Surge Drop Timer         • Groq + Gemini Dual-LLM Proxy & Spend Lens
 ```
 
 ### Key Engineering Modules
 
-1. **Asynchronous Multi-Provider `QuoteEngine` (`utils/quoteEngine/QuoteEngine.ts`)**:
-   - Coordinates synchronous tariff estimators and asynchronous live providers (**ONDC Beckn protocol adapter** `OndcBecknProvider.ts` and `liveSessionBridge.ts`), deduplicating quotes and streaming updates to the UI as providers resolve.
-2. **Multi-Modal Metro + Auto/Bike Split-Route Engine (`utils/metroComboEngine.ts`)**:
-   - Discovers the nearest origin and destination metro stations within a `3.5 km` Haversine radius across 9 city metro networks (Namma Metro, DMRC, Mumbai Metro, etc.) and calculates combined `First-Mile Auto/Bike + Metro + Last-Mile Auto/Bike` cost and travel time savings against direct cab rides.
-3. **Waze-Style Crowdsourced Neighborhood Surge Pooling (`utils/fareReporter.ts`)**:
-   - Pools user-reported fare quotes into **Supabase** (`fare_reports`) with per-km sanity bounds (`₹3–₹350/km`) and 60-second deduplication cooldowns, computing real-time neighborhood surge multipliers for nearby commuters.
-4. **60-Minute Rain-Radar Surge Forecaster (`utils/weatherSurgeEngine.ts`)**:
-   - Queries Open-Meteo's `minutely_15` precipitation radar at the exact pickup GPS coordinates to model weather-induced cab/auto/bike surge multipliers (`1.16x` to `1.52x`) and advise whether waiting 15–30 minutes avoids rain surge.
-5. **Multi-Engine India Geocoding (`utils/distanceEngine.ts`)**:
-   - Combines **Ola Maps**, **Nominatim India**, and **Komoot Photon** with **OSRM** road routing and `expo-location` reverse geocoding across **Bengaluru, Mumbai, Delhi NCR, Hyderabad, Chennai, Pune, Kolkata, Ahmedabad, and Jaipur**.
+1. **Direct Namma Yatri API & Live Session Bridges (`utils/nammaYatriDirectApi.ts`, `utils/liveSessionBridge.ts`, `components/LiveFareScraperPool.tsx`)**:
+   - Connects directly to Namma Yatri's production backend (`https://api.moving.tech/pilot/app/v2`) for OTP login, `/rideSearch` live quotes, automatic `401` token expiry detection, and `/estimate/{id}/select2` in-app ride dispatch.
+   - Extracts live estimates from Rapido's `m.rapido.bike` Angular `window.unupFe.component` and intercepts `Response.prototype.json`, `XMLHttpRequest`, and DOM product rows for linked Uber and Ola sessions using hot-updatable selector rules (`/scraper-config`).
+2. **City-Locked & Pickup-Anchored Place Autocomplete (`utils/placeAutocompleteEngine.ts` & `utils/mapsLinkParser.ts`)**:
+   - Anchors destination searches strictly to the user's selected Pickup coordinates and active city (`viewbox` + `bounded=1` + 90 km Haversine filter), eliminating cross-state noise while supporting Google Maps URLs (`maps.app.goo.gl`, `@lat,lng`, `!3d!4d`) and dynamic Tier-2/Tier-3 Indian cities.
+3. **OSRM Step-Junction Smart Pickup & Interactive Walking Map (`utils/smartPickupEngine.ts`, `components/RoutePreviewMapModal.tsx`)**:
+   - Inspects actual OSRM `steps=true` road maneuvers to test whether walking 100–250m to the primary road junction avoids U-turn loops and geofence surcharges, rendering the green-to-blue dashed walking path on an interactive Leaflet + OpenStreetMap modal with 1-tap Google Maps walking navigation.
+4. **60-Minute Rain-Radar Surge Forecaster & Self-Learning Calibration (`utils/weatherSurgeEngine.ts`, `utils/fareCalibration.ts`, `utils/fareReporter.ts`)**:
+   - Queries Open-Meteo's `minutely_15` precipitation radar at the pickup coordinates, pools live and user-reported fares into the cloud surge pool (`/fare-reports` + Supabase RLS), and updates an exponentially weighted moving average (EWMA) calibration multiplier per city and provider.
+5. **ONDC `ONDC:TRV10` BAP Gateway & Dual-LLM Proxy (`ondc-test/server.js`, `ondc-test/generate-keys.js`)**:
+   - Zero-dependency Node.js server deployed on Render (`https://faresnap-ondc-bap-gateway.onrender.com`) implementing Beckn `ONDC:TRV10` `/search` & `/on_search` with `BLAKE-512` + `Ed25519` signing, `/fare-reports` persistence, `/scraper-config` hot updates, and a server-side Groq (`llama-3.1-8b-instant`) + Google Gemini (`gemini-2.0-flash`) fallback proxy.
 
 ---
 
@@ -69,11 +76,11 @@ Beyond fare comparison, FareSnap integrates **Waze-style crowdsourced neighborho
 
 | Layer | Technology |
 | :--- | :--- |
-| **Mobile Framework** | React Native, Expo, Expo Router, TypeScript |
-| **Routing & Geocoding** | OSRM, Ola Maps, Nominatim, Komoot Photon, `expo-location` |
-| **Backend & Surge Pool** | Supabase (PostgreSQL REST API), ONDC Beckn Protocol |
-| **Weather & AI Insights** | Open-Meteo 15-Minute Radar API, Groq API (`llama-3.1-8b-instant`) |
-| **Build & Distribution** | EAS Build (Android APK / AAB), `AsyncStorage` |
+| **Mobile & Web Framework** | React Native `0.88`, Expo SDK `58`, Expo Router, TypeScript `5.9` |
+| **Autocomplete & Routing** | OSRM (`steps=true`), Ola Maps API, Bounded Nominatim, Komoot Photon, Leaflet + OpenStreetMap |
+| **Live Ride Bridges** | Namma Yatri REST API (`api.moving.tech`), Rapido PWA `unupFe` Bridge, `react-native-webview` Hook Pool |
+| **Cloud Backend & Protocol** | Node.js ONDC `ONDC:TRV10` BAP Gateway (Render), Supabase PostgreSQL + RLS (`supabase/schema.sql`) |
+| **Weather & AI Insights** | Open-Meteo 15-Minute Radar API, Groq (`llama-3.1-8b-instant`) + Gemini (`gemini-2.0-flash`) Proxy |
 
 ---
 
@@ -84,11 +91,14 @@ git clone https://github.com/deveshkolte/FareSnap.git
 cd FareSnap
 npm install
 
-# Configure environment variables
-echo "EXPO_PUBLIC_GROQ_API_KEY=your_groq_key" > .env
+# Copy example environment configuration
+cp .env.example .env
 
-# Launch Expo development server
-npx expo start
+# Start the local ONDC BAP, Surge Pool & AI Proxy server (or use the default Render cloud URL)
+npm run backend
+
+# Launch Expo with Cloud Tunnel for Expo Go (SDK 58) or Web
+npm run tunnel
 ```
 
 ---
@@ -98,21 +108,37 @@ npx expo start
 ```text
 FareSnap/
 ├── app/
-│   ├── (tabs)/index.tsx           # Home screen, city detection & recent routes
-│   ├── location.tsx               # Multi-engine address autocomplete screen
-│   └── results.tsx                # Live quote stream, Metro split card & rain radar UI
+│   ├── _layout.tsx                    # Root stack & Render cloud pre-warm heartbeat
+│   ├── (tabs)/
+│   │   ├── _layout.tsx                # Compare + Spend Lens bottom tab navigator
+│   │   ├── index.tsx                  # Home Command Center, Commute Guard & 1-tap recent routes
+│   │   └── spend.tsx                  # Spend Lens analytics, provider split & trip ledger
+│   ├── location.tsx                   # City-locked autocomplete, Quick Hubs & Maps link input
+│   └── results.tsx                    # Live 20+ product comparison, Smart Pickup, Metro combo & AI forecast
 ├── components/
-│   ├── ConfirmPickupMapModal.tsx  # Interactive pin confirmation modal
-│   └── LiveFareScraperPool.tsx    # Live session quote bridge component
+│   ├── ConfirmPickupMapModal.tsx      # Draggable Leaflet + OpenStreetMap pickup pin modal
+│   ├── RoutePreviewMapModal.tsx       # Smart Pickup walking path & route preview map modal
+│   ├── LinkAppsModal.tsx              # Namma Yatri OTP login, WebView session linker & bridge diagnostics
+│   └── LiveFareScraperPool.tsx        # Offscreen WebView pool for Rapido, Uber & Ola live scraping
+├── ondc-test/
+│   ├── server.js                      # ONDC:TRV10 BAP gateway, surge pool, scraper config & AI proxy
+│   └── generate-keys.js               # Ed25519 + X25519 keypair generator for ONDC registration
+├── supabase/
+│   └── schema.sql                     # Production PostgreSQL table, indexes & RLS policies
 └── utils/
-    ├── quoteEngine/               # Async QuoteEngine + ONDC Beckn & Estimate providers
-    ├── metroComboEngine.ts        # Haversine Metro + Auto/Bike split-route calculator
-    ├── fareReporter.ts            # Supabase crowdsourced surge pooling client
-    ├── weatherSurgeEngine.ts      # Open-Meteo 60-min rain radar surge engine
-    ├── smartPickupEngine.ts       # Walk-to-save pickup optimization
-    ├── distanceEngine.ts          # Multi-engine geocoding & OSRM road distance
-    ├── fareEngine.ts              # City-calibrated tariff & surge models
-    └── appUrls.ts                 # Deep links to Uber, Ola, Rapido, Namma Yatri, etc.
+    ├── placeAutocompleteEngine.ts     # City-locked & pickup-anchored Pan-India autocomplete engine
+    ├── nammaYatriDirectApi.ts         # Production Namma Yatri OTP auth, rideSearch & select2 booking client
+    ├── liveSessionBridge.ts           # WebView fetch/XHR/DOM hook generator, Rapido bridge & trip storage
+    ├── distanceEngine.ts              # Parallel Ola Maps + OSRM step-intersection road routing
+    ├── smartPickupEngine.ts           # OSRM step-junction & multi-bearing Smart Pickup probe
+    ├── weatherSurgeEngine.ts          # Open-Meteo 15-minute rain radar surge forecaster
+    ├── metroComboEngine.ts            # First-Mile Auto + Metro + Last-Mile Auto split-route engine
+    ├── fareCalibration.ts             # Self-learning EWMA field calibration engine
+    ├── fareReporter.ts                # Cloud & Supabase crowdsourced surge pooling client
+    ├── commuteGuard.ts                # Proactive daily commute rain & surge alert evaluator
+    ├── mapsLinkParser.ts              # Google Maps URL, geo URI & coordinate resolver
+    ├── fareEngine.ts                  # 2026 calibrated city tariffs & airport/mall geofence fees
+    └── appUrls.ts                     # Native deep links, walking directions & clipboard handoff
 ```
 
 ---
