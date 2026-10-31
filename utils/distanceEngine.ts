@@ -1,5 +1,13 @@
 export type RouteCoords = { lat: number; lng: number };
 
+export type RouteStepJunction = {
+  name: string;
+  distanceMeters: number;
+  location: RouteCoords;
+  maneuverType: string;
+  modifier?: string;
+};
+
 export type LocationInput =
   | string
   | {
@@ -11,6 +19,11 @@ export type LocationInput =
 export type RoadDistanceResult = {
   distanceKm: number;
   durationMin: number;
+  freeFlowMin: number;
+  intersectionCount: number;
+  turnCount: number;
+  uTurnCount: number;
+  entrySteps: RouteStepJunction[];
   originCoords: RouteCoords;
   destCoords: RouteCoords;
   isEstimatedRoute?: boolean;
@@ -31,7 +44,9 @@ const haversineKm = (a: RouteCoords, b: RouteCoords): number => {
   return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 };
 
-const normalizeLocationInput = (input: LocationInput): { address: string; coords?: RouteCoords } => {
+const normalizeLocationInput = (
+  input: LocationInput
+): { address: string; coords?: RouteCoords } => {
   if (typeof input === 'string') {
     return { address: input };
   }
@@ -46,6 +61,63 @@ const normalizeLocationInput = (input: LocationInput): { address: string; coords
   };
 };
 
+/**
+ * Computes realistic Indian city driving duration from OSRM free-flow time +
+ * actual road-network intersection count, turn penalties, and time-of-day traffic factor.
+ */
+const computeUrbanTrafficDurationMin = (opts: {
+  freeFlowSeconds: number;
+  distanceKm: number;
+  intersectionCount: number;
+  turnCount: number;
+  uTurnCount: number;
+  cityName?: string;
+}): number => {
+  const {
+    freeFlowSeconds,
+    distanceKm,
+    intersectionCount,
+    turnCount,
+    uTurnCount,
+    cityName,
+  } = opts;
+
+  const hour = new Date().getHours();
+  const isPeak = (hour >= 8 && hour <= 11) || (hour >= 17 && hour <= 21);
+  const isNight = hour >= 23 || hour < 6;
+
+  const lowerCity = (cityName || '').toLowerCase();
+  const cityCongestionFactor =
+    lowerCity.includes('bangalore') || lowerCity.includes('mumbai')
+      ? 1.05
+      : lowerCity.includes('delhi') ||
+          lowerCity.includes('hyderabad') ||
+          lowerCity.includes('pune') ||
+          lowerCity.includes('kolkata')
+        ? 1.0
+        : 0.92;
+
+  const perIntersectionSec = isNight ? 8 : isPeak ? 25 : 22;
+  const perTurnSec = isNight ? 12 : 30;
+  const perUTurnSec = isNight ? 20 : 45;
+
+  const signalDelaySec =
+    intersectionCount * perIntersectionSec * cityCongestionFactor;
+  const turnDelaySec = turnCount * perTurnSec + uTurnCount * perUTurnSec;
+
+  const totalMinutes =
+    (freeFlowSeconds + signalDelaySec + turnDelaySec) / 60;
+
+  // Enforce realistic urban speed bounds (11 km/h to 38 km/h in city limits)
+  const minRealisticMin = Math.round((distanceKm / 38) * 60);
+  const maxRealisticMin = Math.round((distanceKm / 11) * 60);
+
+  return Math.max(
+    3,
+    Math.min(maxRealisticMin, Math.max(minRealisticMin, Math.round(totalMinutes)))
+  );
+};
+
 export const getRoadDistance = async (
   originInput: LocationInput,
   destinationInput: LocationInput,
@@ -54,8 +126,12 @@ export const getRoadDistance = async (
   try {
     const geocode = async (address: string): Promise<RouteCoords | null> => {
       const trimmed = address.trim();
-      const parts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
-      const simplified = parts.length > 2 ? `${parts[0]}, ${parts[parts.length - 1]}` : null;
+      const parts = trimmed
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const simplified =
+        parts.length > 2 ? `${parts[0]}, ${parts[parts.length - 1]}` : null;
 
       const queries = [
         trimmed + ' India',
@@ -68,7 +144,9 @@ export const getRoadDistance = async (
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000);
-          const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&bbox=68.1,6.5,97.4,35.7&limit=1&lang=en`;
+          const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(
+            query
+          )}&bbox=68.1,6.5,97.4,35.7&limit=1&lang=en`;
           const res = await fetch(url, { signal: controller.signal });
           clearTimeout(timeout);
           const data = await res.json();
@@ -86,9 +164,9 @@ export const getRoadDistance = async (
     const parsedOrigin = normalizeLocationInput(originInput);
     const parsedDest = normalizeLocationInput(destinationInput);
 
-    const origin = parsedOrigin.coords ?? (await geocode(parsedOrigin.address));
+    const origin =
+      parsedOrigin.coords ?? (await geocode(parsedOrigin.address));
 
-    // Only pause if both endpoints required remote geocoding
     if (!parsedOrigin.coords && !parsedDest.coords) {
       await sleep(300);
     }
@@ -103,7 +181,7 @@ export const getRoadDistance = async (
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=false`;
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=false&steps=true`;
       const routeRes = await fetch(osrmUrl, { signal: controller.signal });
       clearTimeout(timeout);
       const routeData = await routeRes.json();
@@ -111,27 +189,86 @@ export const getRoadDistance = async (
       if (routeData.code === 'Ok' && routeData.routes?.length > 0) {
         const route = routeData.routes[0];
         const distanceKm = Math.max(0.5, route.distance / 1000);
-        const durationMin = Math.max(3, (route.duration / 60) * 1.4);
+        const rawSteps: any[] = route.legs?.[0]?.steps || [];
+
+        const intersectionCount = rawSteps.reduce(
+          (sum, s) => sum + (Array.isArray(s.intersections) ? s.intersections.length : 0),
+          0
+        );
+        const turnCount = rawSteps.filter(
+          (s) =>
+            s?.maneuver?.type === 'turn' ||
+            s?.maneuver?.type === 'end of road'
+        ).length;
+        const uTurnCount = rawSteps.filter(
+          (s) => s?.maneuver?.modifier === 'uturn'
+        ).length;
+
+        const entrySteps: RouteStepJunction[] = rawSteps
+          .slice(0, 4)
+          .filter(
+            (s) =>
+              Array.isArray(s?.maneuver?.location) &&
+              s.maneuver.location.length >= 2
+          )
+          .map((s) => ({
+            name: String(s.name || '').trim(),
+            distanceMeters: Math.round(Number(s.distance || 0)),
+            location: {
+              lng: Number(s.maneuver.location[0]),
+              lat: Number(s.maneuver.location[1]),
+            },
+            maneuverType: String(s.maneuver.type || ''),
+            modifier: s.maneuver.modifier
+              ? String(s.maneuver.modifier)
+              : undefined,
+          }));
+
+        const durationMin = computeUrbanTrafficDurationMin({
+          freeFlowSeconds: route.duration,
+          distanceKm,
+          intersectionCount,
+          turnCount,
+          uTurnCount,
+          cityName,
+        });
 
         return {
           distanceKm: Math.round(distanceKm * 10) / 10,
-          durationMin: Math.round(durationMin),
+          durationMin,
+          freeFlowMin: Math.max(2, Math.round(route.duration / 60)),
+          intersectionCount,
+          turnCount,
+          uTurnCount,
+          entrySteps,
           originCoords: origin,
           destCoords: dest,
         };
       }
     } catch {
-      console.warn('OSRM routing failed, falling back to Haversine road estimate');
+      console.warn(
+        'OSRM routing failed, falling back to Haversine road estimate'
+      );
     }
 
-    // Fallback to Haversine * 1.3 road winding factor if OSRM is unavailable
     const straightKm = haversineKm(origin, dest);
-    const estimatedRoadKm = Math.max(1, Math.round(straightKm * 1.3 * 10) / 10);
-    const estimatedDurationMin = Math.max(5, Math.round((estimatedRoadKm / 22) * 60));
+    const estimatedRoadKm = Math.max(
+      1,
+      Math.round(straightKm * 1.3 * 10) / 10
+    );
+    const estimatedDurationMin = Math.max(
+      5,
+      Math.round((estimatedRoadKm / 18) * 60)
+    );
 
     return {
       distanceKm: estimatedRoadKm,
       durationMin: estimatedDurationMin,
+      freeFlowMin: Math.max(3, Math.round((estimatedRoadKm / 35) * 60)),
+      intersectionCount: Math.round(estimatedRoadKm * 5),
+      turnCount: 2,
+      uTurnCount: 0,
+      entrySteps: [],
       originCoords: origin,
       destCoords: dest,
       isEstimatedRoute: true,
