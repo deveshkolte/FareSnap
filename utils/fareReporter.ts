@@ -1,9 +1,6 @@
-const SUPABASE_URL =
-  process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://xkfusgddkiutasbwigij.supabase.co';
-const SUPABASE_ANON_KEY =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrZnVzZ2Rka2l1dGFzYndpZ2lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMjI2NDEsImV4cCI6MjA5ODc5ODY0MX0.Y27HCTSZI9mVmSbwsGjCRxojVCFys3NQ9kq3UAWQZj4';
-const LOCAL_BAP_URL = (
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+const CLOUD_BAP_URL = (
   process.env.EXPO_PUBLIC_ONDC_BAP_URL ||
   'https://faresnap-ondc-bap-gateway.onrender.com'
 ).replace(/\/$/, '');
@@ -40,33 +37,36 @@ export async function reportFare(data: FareReport): Promise<void> {
     return;
   }
 
-  const dedupeKey = `${data.app}:${data.city}:${data.pickup_area}:${Math.round(data.distance_km)}`;
+  const dedupeKey = `${data.app}:${data.city}:${data.pickup_area}:${Math.round(
+    data.distance_km
+  )}`;
   const lastSubmittedAt = recentSubmissions.get(dedupeKey) ?? 0;
   if (Date.now() - lastSubmittedAt < SUBMISSION_COOLDOWN_MS) {
     return;
   }
   recentSubmissions.set(dedupeKey, Date.now());
 
-  // Submit to local/hosted FareSnap BAP Surge Pool and Supabase concurrently
-  fetch(`${LOCAL_BAP_URL}/fare-reports`, {
+  // 1. Primary Cloud Surge Pool (Render Backend: https://faresnap-ondc-bap-gateway.onrender.com)
+  fetch(`${CLOUD_BAP_URL}/fare-reports`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   }).catch(() => {});
 
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/fare_reports`, {
-      method: 'POST',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
-      },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    // silently ignore
+  // 2. Optional Secondary Supabase Sync (only if EXPO_PUBLIC_SUPABASE_URL is configured)
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/fare_reports`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(data),
+      });
+    } catch {}
   }
 }
 
@@ -80,45 +80,53 @@ export async function fetchRecentCrowdsourcedFares(
   const maxKm = distanceKm * 1.3;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
-    const url = `${SUPABASE_URL}/rest/v1/fare_reports?city=eq.${encodeURIComponent(
-      city
-    )}&distance_km=gte.${minKm.toFixed(1)}&distance_km=lte.${maxKm.toFixed(
-      1
-    )}&select=app,quoted_fare,distance_km&order=id.desc&limit=25`;
-
-    const res = await fetch(url, {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
     let rows: any[] = [];
-    if (res.ok) {
-      const parsed = await res.json();
-      if (Array.isArray(parsed)) rows = parsed;
-    }
-    if (rows.length === 0) {
-      const localRes = await fetch(
-        `${LOCAL_BAP_URL}/fare-reports?city=${encodeURIComponent(
+
+    // 1. Query primary Render Cloud Surge Pool first (fast, zero dead-placeholder delay)
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2800);
+      const cloudRes = await fetch(
+        `${CLOUD_BAP_URL}/fare-reports?city=${encodeURIComponent(
           city
-        )}&minKm=${minKm.toFixed(1)}&maxKm=${maxKm.toFixed(1)}`
+        )}&minKm=${minKm.toFixed(1)}&maxKm=${maxKm.toFixed(1)}`,
+        { signal: controller.signal }
       );
-      if (localRes.ok) {
-        const localParsed = await localRes.json();
-        if (Array.isArray(localParsed)) rows = localParsed;
+      clearTimeout(timeout);
+      if (cloudRes.ok) {
+        const parsed = await cloudRes.json();
+        if (Array.isArray(parsed)) rows = parsed;
+      }
+    } catch {}
+
+    // 2. Optional Supabase fallback if configured
+    if (rows.length === 0 && SUPABASE_URL && SUPABASE_ANON_KEY) {
+      const url = `${SUPABASE_URL}/rest/v1/fare_reports?city=eq.${encodeURIComponent(
+        city
+      )}&distance_km=gte.${minKm.toFixed(1)}&distance_km=lte.${maxKm.toFixed(
+        1
+      )}&select=app,quoted_fare,distance_km&order=id.desc&limit=25`;
+      const res = await fetch(url, {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      });
+      if (res.ok) {
+        const parsed = await res.json();
+        if (Array.isArray(parsed)) rows = parsed;
       }
     }
+
     if (rows.length === 0) return {};
 
     // Normalize reported fares to the current route's distance
     const byApp: Record<string, number[]> = {};
     for (const r of rows) {
       if (r?.app && Number(r.quoted_fare) > 15 && Number(r.distance_km) > 0) {
-        const scaled = Math.round((Number(r.quoted_fare) / Number(r.distance_km)) * distanceKm);
+        const scaled = Math.round(
+          (Number(r.quoted_fare) / Number(r.distance_km)) * distanceKm
+        );
         if (scaled >= 20 && scaled < 10000) {
           byApp[r.app] = byApp[r.app] || [];
           byApp[r.app].push(scaled);
@@ -128,7 +136,9 @@ export async function fetchRecentCrowdsourcedFares(
 
     const averages: Record<string, number> = {};
     for (const [app, vals] of Object.entries(byApp)) {
-      averages[app] = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+      averages[app] = Math.round(
+        vals.reduce((a, b) => a + b, 0) / vals.length
+      );
     }
     return averages;
   } catch {
@@ -147,34 +157,40 @@ export async function fetchLiveAreaSurgeMultipliers(
   if (!city) return {};
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3200);
-    const url = `${SUPABASE_URL}/rest/v1/fare_reports?city=eq.${encodeURIComponent(
-      city
-    )}&select=app,pickup_area,quoted_fare,distance_km&order=id.desc&limit=30`;
-
-    const res = await fetch(url, {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
     let rows: any[] = [];
-    if (res.ok) {
-      const parsed = await res.json();
-      if (Array.isArray(parsed)) rows = parsed;
-    }
-    if (rows.length === 0) {
-      const localRes = await fetch(
-        `${LOCAL_BAP_URL}/fare-reports?city=${encodeURIComponent(city)}`
+
+    // 1. Query primary Render Cloud Surge Pool first
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2800);
+      const cloudRes = await fetch(
+        `${CLOUD_BAP_URL}/fare-reports?city=${encodeURIComponent(city)}`,
+        { signal: controller.signal }
       );
-      if (localRes.ok) {
-        const localParsed = await localRes.json();
-        if (Array.isArray(localParsed)) rows = localParsed;
+      clearTimeout(timeout);
+      if (cloudRes.ok) {
+        const parsed = await cloudRes.json();
+        if (Array.isArray(parsed)) rows = parsed;
+      }
+    } catch {}
+
+    // 2. Optional Supabase fallback if configured
+    if (rows.length === 0 && SUPABASE_URL && SUPABASE_ANON_KEY) {
+      const url = `${SUPABASE_URL}/rest/v1/fare_reports?city=eq.${encodeURIComponent(
+        city
+      )}&select=app,pickup_area,quoted_fare,distance_km&order=id.desc&limit=30`;
+      const res = await fetch(url, {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      });
+      if (res.ok) {
+        const parsed = await res.json();
+        if (Array.isArray(parsed)) rows = parsed;
       }
     }
+
     if (rows.length === 0) return {};
 
     const cleanArea = (pickupArea || '').toLowerCase().trim();

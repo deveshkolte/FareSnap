@@ -696,48 +696,8 @@ export const searchPlacesAutocomplete = async (opts: {
     return candidates.slice(0, 6);
   }
 
-  // 2. Try Ola Maps Autocomplete with location bias if key is configured
+  // 2. Parallel Bounded City Search across Ola Maps + Nominatim (viewbox + bounded=1) + Photon (bbox + lat/lon bias)
   const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
-  if (olaApiKey) {
-    try {
-      const olaUrl = `https://api.olamaps.io/places/v1/autocomplete?input=${encodeURIComponent(
-        clean
-      )}&location=${anchor.lat},${anchor.lng}&radius=55000&strictbounds=true&api_key=${encodeURIComponent(
-        olaApiKey
-      )}`;
-      const res = await fetch(olaUrl, { signal: opts.signal });
-      if (res.ok) {
-        const data = await res.json();
-        const preds = data?.predictions;
-        if (Array.isArray(preds)) {
-          for (const p of preds) {
-            if (!p?.geometry?.location) continue;
-            const lat = Number(p.geometry.location.lat);
-            const lng = Number(p.geometry.location.lng);
-            const name =
-              p.structured_formatting?.main_text ||
-              p.description?.split(',')[0] ||
-              clean;
-            const full = p.description || clean;
-            const subtitle =
-              p.structured_formatting?.secondary_text ||
-              full.split(',').slice(1, 4).join(',').trim() ||
-              cityMeta.label;
-            pushCandidate({
-              name,
-              subtitle,
-              full,
-              lat,
-              lng,
-              categoryIcon: inferCategoryIcon(full),
-            });
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // 3. Bounded City Search across Nominatim (viewbox + bounded=1) and Photon (bbox + lat/lon bias)
   const d = cityMeta.bboxDeltaDeg;
   const minLng = (anchor.lng - d).toFixed(4);
   const minLat = (anchor.lat - d).toFixed(4);
@@ -749,12 +709,25 @@ export const searchPlacesAutocomplete = async (opts: {
   // Nominatim uses viewbox=minLon,maxLat,maxLon,minLat + bounded=1
   const nomViewbox = `${minLng},${maxLat},${maxLng},${minLat}`;
 
-  const queryHasCity = lowerQuery.includes(cityMeta.searchName.toLowerCase()) ||
+  const queryHasCity =
+    lowerQuery.includes(cityMeta.searchName.toLowerCase()) ||
     lowerQuery.includes(cityMeta.label.toLowerCase());
   const nomQuery = queryHasCity ? clean : `${clean}, ${cityMeta.searchName}`;
 
   try {
-    const [nomRes, photonRes] = await Promise.allSettled([
+    const olaPromise = olaApiKey
+      ? fetch(
+          `https://api.olamaps.io/places/v1/autocomplete?input=${encodeURIComponent(
+            clean
+          )}&location=${anchor.lat},${anchor.lng}&radius=55000&strictbounds=true&api_key=${encodeURIComponent(
+            olaApiKey
+          )}`,
+          { signal: opts.signal }
+        ).then((r) => (r.ok ? r.json() : null))
+      : Promise.resolve(null);
+
+    const [olaRes, nomRes, photonRes] = await Promise.allSettled([
+      olaPromise,
       fetch(
         `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
           nomQuery
@@ -773,6 +746,35 @@ export const searchPlacesAutocomplete = async (opts: {
         { signal: opts.signal }
       ).then((r) => r.json()),
     ]);
+
+    if (
+      olaRes.status === 'fulfilled' &&
+      Array.isArray(olaRes.value?.predictions)
+    ) {
+      for (const p of olaRes.value.predictions) {
+        if (!p?.geometry?.location) continue;
+        const lat = Number(p.geometry.location.lat);
+        const lng = Number(p.geometry.location.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const name =
+          p.structured_formatting?.main_text ||
+          p.description?.split(',')[0] ||
+          clean;
+        const full = p.description || clean;
+        const subtitle =
+          p.structured_formatting?.secondary_text ||
+          full.split(',').slice(1, 4).join(',').trim() ||
+          cityMeta.label;
+        pushCandidate({
+          name,
+          subtitle,
+          full,
+          lat,
+          lng,
+          categoryIcon: inferCategoryIcon(full),
+        });
+      }
+    }
 
     if (nomRes.status === 'fulfilled' && Array.isArray(nomRes.value)) {
       for (const item of nomRes.value) {

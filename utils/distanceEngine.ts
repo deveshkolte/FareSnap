@@ -248,13 +248,13 @@ export const getRoadDistance = async (
       return null;
     }
 
-    // Optional live traffic duration from Ola Maps Directions API if key is configured
-    let olaTrafficDurationMin: number | null = null;
+    // Run Ola Maps Directions (traffic_metadata=true) and OSRM (steps=true) concurrently
     const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
-    if (olaApiKey) {
+    const olaTrafficPromise = (async (): Promise<number | null> => {
+      if (!olaApiKey) return null;
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4500);
+        const timeout = setTimeout(() => controller.abort(), 3200);
         const olaRouteUrl = `https://api.olamaps.io/routing/v1/directions?origin=${origin.lat},${origin.lng}&destination=${dest.lat},${dest.lng}&traffic_metadata=true&api_key=${encodeURIComponent(
           olaApiKey
         )}`;
@@ -268,17 +268,21 @@ export const getRoadDistance = async (
           const leg = olaData?.routes?.[0]?.legs?.[0];
           const sec = Number(leg?.duration_in_traffic ?? leg?.duration ?? 0);
           if (sec > 60) {
-            olaTrafficDurationMin = Math.round(sec / 60);
+            return Math.round(sec / 60);
           }
         }
       } catch {}
-    }
+      return null;
+    })();
 
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=false&steps=true`;
-      const routeRes = await fetch(osrmUrl, { signal: controller.signal });
+      const [olaTrafficDurationMin, routeRes] = await Promise.all([
+        olaTrafficPromise,
+        fetch(osrmUrl, { signal: controller.signal }),
+      ]);
       clearTimeout(timeout);
       const routeData = await routeRes.json();
 
