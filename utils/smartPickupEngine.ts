@@ -1,4 +1,4 @@
-import type { RouteCoords } from './distanceEngine';
+import type { RouteCoords, RouteStepJunction } from './distanceEngine';
 
 export type SmartPickupSuggestion = {
   pickupCoords: RouteCoords;
@@ -10,6 +10,19 @@ export type SmartPickupSuggestion = {
   newDistanceKm: number;
   newDurationMin: number;
   estimatedSavings: number;
+};
+
+const haversineMeters = (a: RouteCoords, b: RouteCoords): number => {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6_371_000;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h =
+    sinLat * sinLat +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sinLng * sinLng;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)));
 };
 
 const projectPoint = (
@@ -58,19 +71,25 @@ const getBearingRad = (origin: RouteCoords, dest: RouteCoords): number => {
 const probeOsrmRoute = async (
   candidate: RouteCoords,
   dest: RouteCoords
-): Promise<{ distanceKm: number; durationMin: number } | null> => {
+): Promise<{ distanceKm: number; intersectionCount: number } | null> => {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3200);
-    const url = `https://router.project-osrm.org/route/v1/driving/${candidate.lng},${candidate.lat};${dest.lng},${dest.lat}?overview=false`;
+    const url = `https://router.project-osrm.org/route/v1/driving/${candidate.lng},${candidate.lat};${dest.lng},${dest.lat}?overview=false&steps=true`;
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
     const data = await res.json();
     if (data.code === 'Ok' && data.routes?.length > 0) {
       const r = data.routes[0];
+      const steps: any[] = r.legs?.[0]?.steps || [];
+      const intersectionCount = steps.reduce(
+        (sum, s) =>
+          sum + (Array.isArray(s.intersections) ? s.intersections.length : 0),
+        0
+      );
       return {
         distanceKm: Math.max(0.5, Math.round((r.distance / 1000) * 10) / 10),
-        durationMin: Math.max(3, Math.round((r.duration / 60) * 1.4)),
+        intersectionCount,
       };
     }
   } catch {}
@@ -84,6 +103,7 @@ export const computeSmartPickup = async (opts: {
   distanceKm: number;
   durationMin: number;
   referenceCabFare: number;
+  entrySteps?: RouteStepJunction[];
 }): Promise<SmartPickupSuggestion | null> => {
   const {
     originCoords,
@@ -92,6 +112,7 @@ export const computeSmartPickup = async (opts: {
     distanceKm,
     durationMin,
     referenceCabFare,
+    entrySteps = [],
   } = opts;
 
   if (distanceKm < 1.8) {
@@ -100,87 +121,121 @@ export const computeSmartPickup = async (opts: {
 
   const forwardBearing = getBearingRad(originCoords, destCoords);
 
-  // Probe 3 candidate walkable points:
-  // 1) 170m ahead along the route bearing
-  // 2) 130m across the road (45° left of route bearing — avoids median U-turns)
-  // 3) 130m across the road (45° right of route bearing — avoids median U-turns)
+  // Build candidate walkable pins:
+  // 1) Actual OSRM road-network step junctions (e.g. stepping out of a mall/parking lot onto the main arterial road)
+  // 2) Across-the-road median U-turn avoidance pins (45° left & right)
+  const stepCandidates: {
+    coords: RouteCoords;
+    walkMeters: number;
+    roadName?: string;
+  }[] = [];
+
+  for (const step of entrySteps.slice(1, 4)) {
+    const distM = haversineMeters(originCoords, step.location);
+    if (distM >= 60 && distM <= 360) {
+      stepCandidates.push({
+        coords: step.location,
+        walkMeters: distM,
+        roadName: step.name || undefined,
+      });
+    }
+  }
+
   const candidates = [
+    ...stepCandidates,
     {
       coords: projectPoint(originCoords, forwardBearing, 170),
       walkMeters: 170,
+      roadName: undefined,
     },
     {
       coords: projectPoint(originCoords, forwardBearing - Math.PI / 4, 135),
       walkMeters: 135,
+      roadName: undefined,
     },
     {
       coords: projectPoint(originCoords, forwardBearing + Math.PI / 4, 135),
       walkMeters: 135,
+      roadName: undefined,
     },
   ];
 
   const probeResults = await Promise.all(
-    candidates.map(async (c) => {
+    candidates.slice(0, 4).map(async (c) => {
       const osrm = await probeOsrmRoute(c.coords, destCoords);
       return { ...c, osrm };
     })
   );
 
-  // Pick the candidate that yields the shortest real OSRM road distance
   let bestCandidate = candidates[0];
-  let newDistanceKm = Math.max(1.2, Math.round((distanceKm - 0.5) * 10) / 10);
-  let newDurationMin = Math.max(4, durationMin - 3);
+  let newDistanceKm = Math.max(1.2, Math.round((distanceKm - 0.4) * 10) / 10);
 
   const validProbes = probeResults.filter(
-    (p): p is { coords: RouteCoords; walkMeters: number; osrm: { distanceKm: number; durationMin: number } } =>
-      p.osrm !== null
+    (
+      p
+    ): p is {
+      coords: RouteCoords;
+      walkMeters: number;
+      roadName?: string;
+      osrm: { distanceKm: number; intersectionCount: number };
+    } => p.osrm !== null
   );
 
   if (validProbes.length > 0) {
     validProbes.sort((a, b) => a.osrm.distanceKm - b.osrm.distanceKm);
     const winner = validProbes[0];
-    bestCandidate = { coords: winner.coords, walkMeters: winner.walkMeters };
+    bestCandidate = {
+      coords: winner.coords,
+      walkMeters: winner.walkMeters,
+      roadName: winner.roadName,
+    };
     if (winner.osrm.distanceKm < distanceKm) {
       newDistanceKm = winner.osrm.distanceKm;
-      newDurationMin = Math.min(durationMin - 2, winner.osrm.durationMin);
     }
   }
 
   const walkMeters = bestCandidate.walkMeters;
-  const walkMinutes = Math.max(2, Math.round(walkMeters / 80));
-  const caloriesBurned = Math.round(walkMeters * 0.065);
-  const kmSaved = Math.max(0.3, distanceKm - newDistanceKm);
-  const waitSavedMinutes = kmSaved >= 0.8 ? 4 : 3;
+  const walkMinutes = Math.max(1, Math.round(walkMeters / 80));
+  const caloriesBurned = Math.max(4, Math.round(walkMeters * 0.065));
+  const kmSaved = Math.max(0.25, distanceKm - newDistanceKm);
+  const waitSavedMinutes = kmSaved >= 0.7 ? 4 : 3;
+  const newDurationMin = Math.max(4, durationMin - waitSavedMinutes);
 
-  // Compute savings from both road distance reduction + escaping pickup micro-surge
-  const distanceSavings = Math.round(kmSaved * 14);
-  const surgeAvoidanceSavings = Math.round(referenceCabFare * 0.1);
+  // Calculate savings from reduced road km + reduced traffic wait minutes + exiting parking/mall geofence
+  const distanceAndTimeSavings = Math.round(kmSaved * 20 + waitSavedMinutes * 3);
+  const geofenceExitSavings = /mall|airport|station|tech|park|plaza|parking/i.test(
+    originAddress
+  )
+    ? 22
+    : 12;
   const estimatedSavings = Math.max(
     14,
-    Math.min(95, distanceSavings + surgeAvoidanceSavings)
+    Math.min(95, distanceAndTimeSavings + geofenceExitSavings)
   );
 
-  let streetName = '';
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2800);
-    const res = await fetch(
-      `https://photon.komoot.io/reverse?lon=${bestCandidate.coords.lng}&lat=${bestCandidate.coords.lat}&lang=en`,
-      { signal: controller.signal }
-    );
-    clearTimeout(timeout);
-    const data = await res.json();
-    const props = data?.features?.[0]?.properties;
-    if (props) {
-      streetName = [props.name, props.street].filter(Boolean)[0] || '';
-    }
-  } catch {}
+  let streetName = bestCandidate.roadName || '';
+  if (!streetName) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2800);
+      const res = await fetch(
+        `https://photon.komoot.io/reverse?lon=${bestCandidate.coords.lng}&lat=${bestCandidate.coords.lat}&lang=en`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeout);
+      const data = await res.json();
+      const props = data?.features?.[0]?.properties;
+      if (props) {
+        streetName = [props.street, props.name].filter(Boolean)[0] || '';
+      }
+    } catch {}
+  }
 
   const baseShort = originAddress.split(',')[0].trim();
   const pickupLabel =
     streetName && streetName.toLowerCase() !== baseShort.toLowerCase()
       ? `${streetName} (${walkMeters}m walk)`
-      : `Main Road Pickup (${walkMeters}m ahead of ${baseShort})`;
+      : `Main Road Junction (${walkMeters}m ahead of ${baseShort})`;
 
   return {
     pickupCoords: bestCandidate.coords,
@@ -190,7 +245,7 @@ export const computeSmartPickup = async (opts: {
     caloriesBurned,
     waitSavedMinutes,
     newDistanceKm,
-    newDurationMin: Math.max(3, newDurationMin),
+    newDurationMin,
     estimatedSavings,
   };
 };
