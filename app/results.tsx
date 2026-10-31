@@ -663,7 +663,7 @@ export default function ResultsScreen() {
 
   const pendingBookRideRef = useRef<FlatRideOption | null>(null);
   const lastAiKeyRef = useRef<string>('');
-  const pulseAnim = useRef(new Animated.Value(0.45)).current;
+  const [pulseAnim] = useState(() => new Animated.Value(0.45));
 
   useEffect(() => {
     const loop = Animated.loop(

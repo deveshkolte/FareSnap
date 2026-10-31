@@ -509,7 +509,7 @@ export default function LocationScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar barStyle="dark-content" />
       <Stack.Screen
         options={{
           title: 'Ride Details',

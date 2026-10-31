@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -59,11 +59,11 @@ export default function HomeScreen() {
   });
 
   // Home screen fade in
-  const homeFade = useRef(new Animated.Value(0)).current;
-  const homeSlide = useRef(new Animated.Value(30)).current;
+  const [homeFade] = useState(() => new Animated.Value(0));
+  const [homeSlide] = useState(() => new Animated.Value(30));
 
   // Onboarding slide animation
-  const slideX = useRef(new Animated.Value(0)).current;
+  const [slideX] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const check = async () => {
@@ -141,7 +141,7 @@ export default function HomeScreen() {
   if (showOnboarding) {
     return (
       <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
+        <StatusBar barStyle="dark-content" />
 
         {/* Skip */}
         <TouchableOpacity style={styles.skipButton} onPress={handleFinish}>
@@ -206,7 +206,7 @@ export default function HomeScreen() {
   // Home screen
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
+      <StatusBar barStyle="dark-content" />
 
       <Animated.View
         style={[
