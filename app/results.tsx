@@ -43,6 +43,12 @@ import {
   computeMetroSplitCombo,
   MetroSplitCombo,
 } from '../utils/metroComboEngine';
+import {
+  getMonetizationConfig,
+  openPartnerOffer,
+  refreshMonetizationConfig,
+  RemoteMonetizationConfig,
+} from '../utils/monetizationEngine';
 import { FareQuote, QuoteEngine } from '../utils/quoteEngine';
 import {
   getLifetimeSavings,
@@ -622,6 +628,9 @@ export default function ResultsScreen() {
   );
   const [copiedDestToast, setCopiedDestToast] = useState<string | null>(null);
   const [commutePinned, setCommutePinned] = useState(false);
+  const [monetization, setMonetization] = useState<RemoteMonetizationConfig>(
+    getMonetizationConfig()
+  );
 
   // Linked Providers & Real Scraped Live Products from WebView Pool
   const [linkModalVisible, setLinkModalVisible] = useState(false);
@@ -703,6 +712,7 @@ export default function ResultsScreen() {
     getLinkedProviders().then(setLinkedProviders).catch(() => {});
     getLifetimeSavings().then(setLifetimeSavings).catch(() => {});
     refreshRemoteScraperConfig().catch(() => {});
+    refreshMonetizationConfig().then(setMonetization).catch(() => {});
     getSavedCommuteRoute()
       .then((saved) => {
         if (
@@ -2259,6 +2269,23 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
               );
             })}
 
+            {monetization.enabled && (
+              <TouchableOpacity
+                style={styles.upiRewardBannerBtn}
+                onPress={() =>
+                  openPartnerOffer(
+                    'payment_sheet_upi_reward',
+                    monetization.upiRewardTitle,
+                    monetization.upiReferralUrl
+                  )
+                }
+              >
+                <Text style={styles.upiRewardBannerText}>
+                  {monetization.upiRewardTitle}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={[styles.sheetConfirmBlackBtn, { marginTop: 12 }]}
               onPress={() => {
@@ -2366,6 +2393,23 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   value={fareInput}
                   onChangeText={setFareInput}
                 />
+
+                {monetization.enabled && (
+                  <TouchableOpacity
+                    style={styles.upiRewardBannerBtn}
+                    onPress={() =>
+                      openPartnerOffer(
+                        'post_ride_partner_perk',
+                        monetization.postRidePerkTitle,
+                        monetization.postRidePerkUrl
+                      )
+                    }
+                  >
+                    <Text style={styles.upiRewardBannerText}>
+                      {monetization.postRidePerkTitle}
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
                 <Text style={styles.shareFriendsLabel}>
                   Share with your friends
@@ -2684,6 +2728,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#1d4ed8',
+    textAlign: 'center',
+  },
+  upiRewardBannerBtn: {
+    width: '100%',
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  upiRewardBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563eb',
     textAlign: 'center',
   },
   linkBannerPrompt: {

@@ -1,6 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Linking } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
+import { wrapWithAffiliateTracking } from './monetizationEngine';
 
 const UBER_CLIENT_ID = 'qrL6tAfv9pCWuvHuuJWAOOwAft7B-_TF';
 
@@ -184,7 +185,7 @@ export async function openRideApp(
   opts?: OpenRideAppOpts
 ): Promise<{ handoffHasCoords: boolean; copiedAddress?: string }> {
   const deepLink = getDeepLink(appName, opts);
-  const webUrl = getWebUrl(appName, opts);
+  const webUrl = wrapWithAffiliateTracking(appName, getWebUrl(appName, opts));
   const handoffHasCoords = supportsCoordinateHandoff(appName);
   let copiedAddress: string | undefined;
 

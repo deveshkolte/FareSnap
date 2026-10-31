@@ -80,6 +80,38 @@ function savePersistedFareReports(pool) {
 
 const fareReportsPool = loadPersistedFareReports();
 
+// Monetization click & conversion telemetry store
+const MONETIZATION_STATS_FILE = path.resolve(DATA_DIR, 'monetization_stats.json');
+function loadMonetizationStats() {
+  try {
+    if (fs.existsSync(MONETIZATION_STATS_FILE)) {
+      return JSON.parse(fs.readFileSync(MONETIZATION_STATS_FILE, 'utf8'));
+    }
+  } catch {}
+  return {
+    totalClicks: 0,
+    bySlot: {
+      airport_chauffeur_affiliate: 0,
+      spend_lens_cashback_card: 0,
+      payment_sheet_upi_reward: 0,
+      post_ride_partner_perk: 0,
+    },
+    recentClicks: [],
+  };
+}
+const monetizationStats = loadMonetizationStats();
+function saveMonetizationStats() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(
+      MONETIZATION_STATS_FILE,
+      JSON.stringify(monetizationStats, null, 2)
+    );
+  } catch {}
+}
+
 // Cleanup old transactions every 5 minutes
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
@@ -443,6 +475,68 @@ function createServer() {
         ],
         extraPriceKeys: ['totalFare', 'finalFare', 'upfrontFare'],
       });
+    }
+
+    // Remote Monetization Config & Click Telemetry Endpoints
+    if (req.method === 'GET' && url.pathname === '/monetization-config') {
+      return sendJson(res, 200, {
+        enabled: true,
+        cuelinksPubId: process.env.CUELINKS_PUB_ID || '',
+        savaariAffiliateUrl:
+          process.env.SAVAARI_AFFILIATE_URL ||
+          'https://www.savaari.com/?utm_source=faresnap&utm_medium=affiliate',
+        cashbackCardTitle:
+          process.env.CASHBACK_CARD_TITLE ||
+          'Get 5% Cashback on Uber, Ola & Rapido',
+        cashbackCardSubtitle:
+          process.env.CASHBACK_CARD_SUBTITLE ||
+          'Commuters save an extra 5% on every cab, auto & bike ride with zero-fee UPI & RuPay cashback.',
+        cashbackCardCta:
+          process.env.CASHBACK_CARD_CTA || 'Unlock 5% Ride Cashback →',
+        cashbackOfferUrl:
+          process.env.CASHBACK_OFFER_URL ||
+          'https://super.money/?utm_source=faresnap',
+        upiRewardTitle:
+          process.env.UPI_REWARD_TITLE ||
+          '🎁 Get up to 5% cashback on Ride UPI payments →',
+        upiReferralUrl:
+          process.env.UPI_REFERRAL_URL ||
+          'https://super.money/?utm_source=faresnap_upi',
+        postRidePerkTitle:
+          process.env.POST_RIDE_PERK_TITLE ||
+          '💳 Earn 5% back on this ride with Super UPI / Cashback →',
+        postRidePerkUrl:
+          process.env.POST_RIDE_PERK_URL ||
+          'https://super.money/?utm_source=faresnap_postride',
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/monetization-click') {
+      try {
+        const body = await readJsonBody(req);
+        const slotId = String(body?.slotId || 'unknown');
+        monetizationStats.totalClicks =
+          (monetizationStats.totalClicks || 0) + 1;
+        monetizationStats.bySlot[slotId] =
+          (monetizationStats.bySlot[slotId] || 0) + 1;
+        monetizationStats.recentClicks.unshift({
+          slotId,
+          providerOrLabel: String(body?.providerOrLabel || ''),
+          estimatedRideValue: Number(body?.estimatedRideValue || 0),
+          timestamp: new Date().toISOString(),
+        });
+        if (monetizationStats.recentClicks.length > 100) {
+          monetizationStats.recentClicks.length = 100;
+        }
+        saveMonetizationStats();
+        return sendJson(res, 201, { ok: true });
+      } catch (err) {
+        return sendJson(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    if (req.method === 'GET' && url.pathname === '/monetization-stats') {
+      return sendJson(res, 200, monetizationStats);
     }
 
     // Phone QR Launcher (Expo Go Tunnel + Web + APK)

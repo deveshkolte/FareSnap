@@ -15,6 +15,12 @@ import {
   LifetimeSavingsData,
   RideTripRecord,
 } from '../../utils/liveSessionBridge';
+import {
+  getMonetizationConfig,
+  openPartnerOffer,
+  refreshMonetizationConfig,
+  RemoteMonetizationConfig,
+} from '../../utils/monetizationEngine';
 
 export default function SpendLensScreen() {
   const router = useRouter();
@@ -25,6 +31,9 @@ export default function SpendLensScreen() {
     lastTripSaved: 0,
   });
   const [trips, setTrips] = useState<RideTripRecord[]>([]);
+  const [monetization, setMonetization] = useState<RemoteMonetizationConfig>(
+    getMonetizationConfig()
+  );
 
   const loadData = useCallback(async () => {
     const [s, t] = await Promise.all([
@@ -37,6 +46,7 @@ export default function SpendLensScreen() {
 
   useEffect(() => {
     loadData();
+    refreshMonetizationConfig().then(setMonetization).catch(() => {});
     const interval = setInterval(loadData, 2500);
     return () => clearInterval(interval);
   }, [loadData]);
@@ -44,6 +54,10 @@ export default function SpendLensScreen() {
   const totalSpent = trips.reduce((sum, t) => sum + (t.pricePaid || 0), 0);
   const totalKm = trips.reduce((sum, t) => sum + (t.distanceKm || 0), 0);
   const avgPerKm = totalKm > 0 ? Math.round((totalSpent / totalKm) * 10) / 10 : 0;
+  const extraFivePctCashback = Math.max(
+    150,
+    Math.round((totalSpent > 0 ? totalSpent : 3000) * 0.05)
+  );
 
   // Spend by provider
   const byProvider: Record<string, { spent: number; count: number }> = {};
@@ -96,6 +110,41 @@ export default function SpendLensScreen() {
             </Text>
           </View>
         </View>
+
+        {/* Commuter Cashback & UPI Monetization Card */}
+        {monetization.enabled && (
+          <View style={styles.cashbackPerkCard}>
+            <View style={styles.cashbackBadgeRow}>
+              <Text style={styles.cashbackBadge}>
+                💳 COMMUTER PERK · EXTRA 5% BACK
+              </Text>
+              <Text style={styles.cashbackEstValue}>
+                +₹{extraFivePctCashback} back
+              </Text>
+            </View>
+            <Text style={styles.cashbackTitle}>
+              {monetization.cashbackCardTitle}
+            </Text>
+            <Text style={styles.cashbackSub}>
+              {monetization.cashbackCardSubtitle}
+            </Text>
+            <TouchableOpacity
+              style={styles.cashbackCtaBtn}
+              onPress={() =>
+                openPartnerOffer(
+                  'spend_lens_cashback_card',
+                  monetization.cashbackCardTitle,
+                  monetization.cashbackOfferUrl
+                )
+              }
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cashbackCtaText}>
+                {monetization.cashbackCardCta}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Provider Breakdown */}
         {providerList.length > 0 && (
@@ -251,6 +300,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#2563eb',
     marginTop: 4,
+  },
+  cashbackPerkCard: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    marginBottom: 16,
+  },
+  cashbackBadgeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  cashbackBadge: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1d4ed8',
+  },
+  cashbackEstValue: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#16a34a',
+    backgroundColor: '#ffffff',
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+  },
+  cashbackTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  cashbackSub: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  cashbackCtaBtn: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  cashbackCtaText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   sectionCard: {
     backgroundColor: '#ffffff',
