@@ -122,6 +122,27 @@ export function ConfirmPickupMapModal({
     }
   };
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible || typeof window === 'undefined') {
+      return;
+    }
+    const listener = (event: MessageEvent) => {
+      try {
+        const parsed =
+          typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (
+          parsed?.type === 'PIN_MOVED' &&
+          typeof parsed.lat === 'number' &&
+          typeof parsed.lng === 'number'
+        ) {
+          handlePinMove(parsed.lat, parsed.lng);
+        }
+      } catch {}
+    };
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
+  }, [visible]);
+
   return (
     <Modal
       visible={visible}
@@ -136,15 +157,11 @@ export function ConfirmPickupMapModal({
 
           <View style={styles.mapContainer}>
             {Platform.OS === 'web' ? (
-              <View style={styles.webMapFallback}>
-                <Text style={styles.webMapPin}>📍</Text>
-                <Text style={styles.webMapCoords}>
-                  {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
-                </Text>
-                <Text style={styles.webMapHint}>
-                  OpenStreetMap Pin Ready
-                </Text>
-              </View>
+              <iframe
+                title="Confirm Pickup Map"
+                srcDoc={buildLeafletHtml(initialLat, initialLng)}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+              />
             ) : (
               <WebView
                 originWhitelist={['*']}

@@ -128,12 +128,16 @@ export function RoutePreviewMapModal({
 
           <View style={styles.mapBox}>
             {Platform.OS === 'web' ? (
-              <View style={styles.webFallback}>
-                <Text style={styles.webEmoji}>🗺️</Text>
-                <Text style={styles.webText}>
-                  {smartPickupLabel || 'Route Map'}
-                </Text>
-              </View>
+              <iframe
+                title="Route Preview Map"
+                srcDoc={buildRoutePreviewHtml({
+                  origin: originCoords,
+                  smart: smartPickupCoords,
+                  smartLabel: smartPickupLabel,
+                  dest: destCoords,
+                })}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+              />
             ) : (
               <WebView
                 originWhitelist={['*']}
