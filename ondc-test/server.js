@@ -579,9 +579,9 @@ function createServer() {
 
 if (require.main === module) {
   const server = createServer();
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `FareSnap ONDC BAP Gateway, Surge Pool & AI Proxy listening on http://localhost:${PORT}`
+      `FareSnap ONDC BAP Gateway, Surge Pool & AI Proxy listening on http://0.0.0.0:${PORT}`
     );
   });
 }

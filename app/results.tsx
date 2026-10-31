@@ -1120,26 +1120,14 @@ export default function ResultsScreen() {
 
       try {
         setAiLoading(true);
-        const endpoint =
-          proxyUrl || 'https://api.groq.com/openai/v1/chat/completions';
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (!proxyUrl && apiKey) {
-          headers.Authorization = `Bearer ${apiKey}`;
-        }
-
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            model: 'llama-3.1-8b-instant',
-            max_tokens: 220,
-            temperature: 0.3,
-            messages: [
-              {
-                role: 'user',
-                content: `You are an Indian ride-hailing fare analyst. Analyze this specific route and fare table:
+        const promptBody = {
+          model: 'llama-3.1-8b-instant',
+          max_tokens: 220,
+          temperature: 0.3,
+          messages: [
+            {
+              role: 'user',
+              content: `You are an Indian ride-hailing fare analyst. Analyze this specific route and fare table:
 City: ${CITY_LABELS[city]}
 Route: ${pickup.address} to ${destination.address} (${baseDistanceKm} km, ~${baseDurationMin} mins)
 Time: ${hour}:00 ${day}, Season: ${season}, Traffic window: ${surgeStatus}
@@ -1147,13 +1135,48 @@ Current lowest quotes: ${topQuoteSummary || 'N/A'}
 
 Return ONLY valid JSON matching this schema (no markdown, no extra text):
 {"trend":"up"|"down"|"stable","trendPercent":number,"trendTimeframe":"15 mins"|"30 mins","confidence":"low"|"medium"|"high","advice":"1 concise sentence of booking advice for this route","smartEstimate":"1 concise sentence naming the best value option from the quotes above"}`,
-              },
-            ],
-          }),
-        });
+            },
+          ],
+        };
 
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
+        let data: any = null;
+
+        // 1. Try backend AI proxy first (fast 2.5s timeout so mobile devices outside LAN don't hang)
+        if (proxyUrl) {
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 2500);
+            const proxyRes = await fetch(proxyUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(promptBody),
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            if (proxyRes.ok) {
+              data = await proxyRes.json();
+            }
+          } catch {}
+        }
+
+        // 2. Fallback to direct Groq API when on a standalone phone APK away from local proxy
+        if (!data && apiKey && apiKey !== 'your_groq_api_key_here') {
+          const directRes = await fetch(
+            'https://api.groq.com/openai/v1/chat/completions',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify(promptBody),
+            }
+          );
+          if (directRes.ok) {
+            data = await directRes.json();
+          }
+        }
+
         const text = data?.choices?.[0]?.message?.content;
         if (!text) throw new Error('Empty response');
         const clean = text.replace(/```json|```/g, '').trim();
