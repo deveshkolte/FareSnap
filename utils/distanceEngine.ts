@@ -126,6 +126,28 @@ export const getRoadDistance = async (
   try {
     const geocode = async (address: string): Promise<RouteCoords | null> => {
       const trimmed = address.trim();
+      const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
+
+      // 1. Try Ola Maps Geocode if API key is configured
+      if (olaApiKey) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4500);
+          const olaUrl = `https://api.olamaps.io/places/v1/geocode?address=${encodeURIComponent(
+            cityName ? `${trimmed}, ${cityName}` : trimmed
+          )}&language=en&api_key=${encodeURIComponent(olaApiKey)}`;
+          const res = await fetch(olaUrl, { signal: controller.signal });
+          clearTimeout(timeout);
+          if (res.ok) {
+            const data = await res.json();
+            const loc = data?.geocodingResults?.[0]?.geometry?.location;
+            if (typeof loc?.lat === 'number' && typeof loc?.lng === 'number') {
+              return { lat: loc.lat, lng: loc.lng };
+            }
+          }
+        } catch {}
+      }
+
       const parts = trimmed
         .split(',')
         .map((p) => p.trim())
@@ -133,6 +155,34 @@ export const getRoadDistance = async (
       const simplified =
         parts.length > 2 ? `${parts[0]}, ${parts[parts.length - 1]}` : null;
 
+      // 2. Try Nominatim India (indexes Indian building, mall, and society names)
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4500);
+        const nomQuery = cityName ? `${parts[0]}, ${cityName}` : trimmed;
+        const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          nomQuery
+        )}&countrycodes=in&format=json&limit=1`;
+        const res = await fetch(nomUrl, {
+          headers: {
+            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
+          },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const lat = parseFloat(data[0].lat);
+            const lng = parseFloat(data[0].lon);
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              return { lat, lng };
+            }
+          }
+        }
+      } catch {}
+
+      // 3. Fallback to Photon India bbox
       const queries = [
         trimmed + ' India',
         cityName ? `${trimmed} ${cityName} India` : null,
@@ -143,7 +193,7 @@ export const getRoadDistance = async (
       for (const query of queries) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 6000);
+          const timeout = setTimeout(() => controller.abort(), 5000);
           const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(
             query
           )}&bbox=68.1,6.5,97.4,35.7&limit=1&lang=en`;
@@ -176,6 +226,32 @@ export const getRoadDistance = async (
     if (!origin || !dest) {
       console.error('Geocoding failed for one or both addresses');
       return null;
+    }
+
+    // Optional live traffic duration from Ola Maps Directions API if key is configured
+    let olaTrafficDurationMin: number | null = null;
+    const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
+    if (olaApiKey) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4500);
+        const olaRouteUrl = `https://api.olamaps.io/routing/v1/directions?origin=${origin.lat},${origin.lng}&destination=${dest.lat},${dest.lng}&traffic_metadata=true&api_key=${encodeURIComponent(
+          olaApiKey
+        )}`;
+        const olaRes = await fetch(olaRouteUrl, {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (olaRes.ok) {
+          const olaData = await olaRes.json();
+          const leg = olaData?.routes?.[0]?.legs?.[0];
+          const sec = Number(leg?.duration_in_traffic ?? leg?.duration ?? 0);
+          if (sec > 60) {
+            olaTrafficDurationMin = Math.round(sec / 60);
+          }
+        }
+      } catch {}
     }
 
     try {
@@ -224,14 +300,16 @@ export const getRoadDistance = async (
               : undefined,
           }));
 
-        const durationMin = computeUrbanTrafficDurationMin({
-          freeFlowSeconds: route.duration,
-          distanceKm,
-          intersectionCount,
-          turnCount,
-          uTurnCount,
-          cityName,
-        });
+        const durationMin =
+          olaTrafficDurationMin ??
+          computeUrbanTrafficDurationMin({
+            freeFlowSeconds: route.duration,
+            distanceKm,
+            intersectionCount,
+            turnCount,
+            uTurnCount,
+            cityName,
+          });
 
         return {
           distanceKm: Math.round(distanceKm * 10) / 10,

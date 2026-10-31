@@ -59,24 +59,108 @@ const fetchSuggestions = async (
   query: string,
   signal?: AbortSignal
 ): Promise<Suggestion[]> => {
-  if (query.trim().length < 3) return [];
+  const clean = query.trim();
+  if (clean.length < 3) return [];
+
+  const olaApiKey = process.env.EXPO_PUBLIC_OLA_MAPS_API_KEY;
+  if (olaApiKey) {
+    try {
+      const olaUrl = `https://api.olamaps.io/places/v1/autocomplete?input=${encodeURIComponent(
+        clean
+      )}&api_key=${encodeURIComponent(olaApiKey)}`;
+      const res = await fetch(olaUrl, { signal });
+      if (res.ok) {
+        const data = await res.json();
+        const preds = data?.predictions;
+        if (Array.isArray(preds) && preds.length > 0) {
+          return preds
+            .filter((p: any) => p?.geometry?.location)
+            .slice(0, 5)
+            .map((p: any) => ({
+              name:
+                p.structured_formatting?.main_text ||
+                p.description?.split(',')[0] ||
+                clean,
+              full: p.description || clean,
+              lat: Number(p.geometry.location.lat),
+              lng: Number(p.geometry.location.lng),
+            }));
+        }
+      }
+    } catch {}
+  }
+
   try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(
-      query.trim() + ' India'
-    )}&bbox=${INDIA_BBOX}&limit=5&lang=en`;
-    const res = await fetch(url, { signal });
-    const data = await res.json();
-    if (!data.features) return [];
-    return data.features.map((f: any) => {
-      const p = f.properties;
-      const parts = [p.name, p.street, p.city, p.state].filter(Boolean);
-      return {
-        name: p.name || parts[0] || query.trim(),
-        full: parts.join(', ') || query.trim(),
-        lat: f.geometry.coordinates[1],
-        lng: f.geometry.coordinates[0],
-      };
-    });
+    const [photonRes, nomRes] = await Promise.allSettled([
+      fetch(
+        `https://photon.komoot.io/api/?q=${encodeURIComponent(
+          clean + ' India'
+        )}&bbox=${INDIA_BBOX}&limit=4&lang=en`,
+        { signal }
+      ).then((r) => r.json()),
+      fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          clean
+        )}&countrycodes=in&format=json&addressdetails=1&limit=3`,
+        {
+          headers: {
+            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
+          },
+          signal,
+        }
+      ).then((r) => r.json()),
+    ]);
+
+    const combined: Suggestion[] = [];
+    const seenKeys = new Set<string>();
+
+    if (
+      nomRes.status === 'fulfilled' &&
+      Array.isArray(nomRes.value)
+    ) {
+      for (const item of nomRes.value) {
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        const name =
+          item.name ||
+          item.display_name?.split(',')[0]?.trim() ||
+          clean;
+        const full = item.display_name
+          ? item.display_name
+              .split(',')
+              .map((s: string) => s.trim())
+              .slice(0, 4)
+              .join(', ')
+          : name;
+        const key = `${name.toLowerCase()}:${lat.toFixed(2)},${lng.toFixed(2)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combined.push({ name, full, lat, lng });
+        }
+      }
+    }
+
+    if (
+      photonRes.status === 'fulfilled' &&
+      Array.isArray(photonRes.value?.features)
+    ) {
+      for (const f of photonRes.value.features) {
+        const p = f.properties || {};
+        const parts = [p.name, p.street, p.city, p.state].filter(Boolean);
+        const name = p.name || parts[0] || clean;
+        const full = parts.join(', ') || clean;
+        const lat = f.geometry.coordinates[1];
+        const lng = f.geometry.coordinates[0];
+        const key = `${name.toLowerCase()}:${lat.toFixed(2)},${lng.toFixed(2)}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          combined.push({ name, full, lat, lng });
+        }
+      }
+    }
+
+    return combined.slice(0, 5);
   } catch {
     return [];
   }
