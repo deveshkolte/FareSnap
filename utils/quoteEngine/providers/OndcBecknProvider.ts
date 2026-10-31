@@ -7,7 +7,8 @@ import {
 } from '../types';
 
 const DEFAULT_ONDC_BAP_URL =
-  process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040';
+  process.env.EXPO_PUBLIC_ONDC_BAP_URL ||
+  'https://faresnap-ondc-bap-gateway.onrender.com';
 
 export class OndcBecknProvider implements AsyncRideProvider {
   id = 'ondc_beckn_live';

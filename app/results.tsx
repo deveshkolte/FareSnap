@@ -1143,7 +1143,9 @@ export default function ResultsScreen() {
         .join(', ');
 
       const apiKey = process.env.EXPO_PUBLIC_GROQ_API_KEY;
-      const proxyUrl = process.env.EXPO_PUBLIC_AI_PROXY_URL;
+      const proxyUrl =
+        process.env.EXPO_PUBLIC_AI_PROXY_URL ||
+        'https://faresnap-ondc-bap-gateway.onrender.com/proxy/ai-insight';
 
       if (!proxyUrl && (!apiKey || apiKey === 'your_groq_api_key_here')) {
         setAiInsight(buildLocalFallbackInsight(surgeStatus, sortedByPrice[0]));

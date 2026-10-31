@@ -4,7 +4,8 @@ const SUPABASE_ANON_KEY =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrZnVzZ2Rka2l1dGFzYndpZ2lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMjI2NDEsImV4cCI6MjA5ODc5ODY0MX0.Y27HCTSZI9mVmSbwsGjCRxojVCFys3NQ9kq3UAWQZj4';
 const LOCAL_BAP_URL = (
-  process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040'
+  process.env.EXPO_PUBLIC_ONDC_BAP_URL ||
+  'https://faresnap-ondc-bap-gateway.onrender.com'
 ).replace(/\/$/, '');
 
 export type FareReport = {

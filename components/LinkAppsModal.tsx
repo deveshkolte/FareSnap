@@ -89,7 +89,8 @@ export function LinkAppsModal({
         .then((t) => setHasNyToken(Boolean(t)))
         .catch(() => {});
       const bapUrl = (
-        process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040'
+        process.env.EXPO_PUBLIC_ONDC_BAP_URL ||
+        'https://faresnap-ondc-bap-gateway.onrender.com'
       ).replace(/\/$/, '');
       fetch(`${bapUrl}/health`)
         .then((r) => setBapConnected(r.ok))

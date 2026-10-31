@@ -192,7 +192,8 @@ let cachedScraperConfig: RemoteScraperConfig = DEFAULT_SCRAPER_CONFIG;
 
 export async function refreshRemoteScraperConfig(): Promise<RemoteScraperConfig> {
   const bapUrl = (
-    process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040'
+    process.env.EXPO_PUBLIC_ONDC_BAP_URL ||
+    'https://faresnap-ondc-bap-gateway.onrender.com'
   ).replace(/\/$/, '');
   try {
     const ctrl = new AbortController();
