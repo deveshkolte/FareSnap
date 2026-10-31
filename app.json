@@ -24,11 +24,14 @@
       "queries": [
         "uber://",
         "olacabs://",
-        "in.rapido.passanger://",
+        "in.rapido.passenger://",
         "yatri://",
         "blusmart://",
         "merucabs://",
+        "meru://",
         "indrive://",
+        "bharatcab://",
+        "savaari://",
         "porter://",
         "jugnoo://"
       ],

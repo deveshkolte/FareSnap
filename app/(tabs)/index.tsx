@@ -3,16 +3,14 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
-  Dimensions,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const { width } = Dimensions.get('window');
 
 const SLIDES = [
   {
@@ -35,6 +33,7 @@ const SLIDES = [
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -57,6 +56,11 @@ export default function HomeScreen() {
     check();
   }, []);
 
+  // Keep onboarding slide aligned if screen dimensions change (e.g., rotation/split-screen)
+  useEffect(() => {
+    slideX.setValue(-width * currentIndex);
+  }, [width, currentIndex, slideX]);
+
   // Animate home screen in when onboarding finishes
   useEffect(() => {
     if (showOnboarding === false) {
@@ -67,7 +71,7 @@ export default function HomeScreen() {
         Animated.timing(homeSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
       ]).start();
     }
-  }, [showOnboarding]);
+  }, [showOnboarding, homeFade, homeSlide]);
 
   const handleFinish = async () => {
     await AsyncStorage.setItem('faresnap_onboarded', 'true');
@@ -120,11 +124,11 @@ export default function HomeScreen() {
           <Animated.View
             style={[
               styles.slidesTrack,
-              { transform: [{ translateX: slideX }] },
+              { width: width * SLIDES.length, transform: [{ translateX: slideX }] },
             ]}
           >
             {SLIDES.map((slide, i) => (
-              <View key={i} style={styles.slide}>
+              <View key={i} style={[styles.slide, { width }]}>
                 <View style={styles.emojiContainer}>
                   <Text style={styles.onboardEmoji}>{slide.emoji}</Text>
                 </View>
@@ -238,11 +242,9 @@ const styles = StyleSheet.create({
   },
   slidesTrack: {
     flexDirection: 'row',
-    width: width * SLIDES.length,
     flex: 1,
   },
   slide: {
-    width: width,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 36,

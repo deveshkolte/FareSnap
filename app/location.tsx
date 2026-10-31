@@ -23,6 +23,10 @@ type LocationData = {
 type RouteHistory = {
   pickup: string;
   destination: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  destLat?: number;
+  destLng?: number;
   timestamp: number;
 };
 
@@ -35,20 +39,33 @@ type Suggestion = {
 
 const HISTORY_KEY = 'faresnap_route_history';
 const MAX_HISTORY = 5;
+const INDIA_BBOX = '68.1,6.5,97.4,35.7';
 
-const fetchSuggestions = async (query: string): Promise<Suggestion[]> => {
-  if (query.length < 3) return [];
+const POPULAR_HUBS: { label: string; icon: string; query: string }[] = [
+  { label: 'Airport', icon: '✈️', query: 'International Airport' },
+  { label: 'Railway Station', icon: '🚉', query: 'Railway Station Junction' },
+  { label: 'Metro Station', icon: '🚇', query: 'Metro Station' },
+  { label: 'Tech Park', icon: '🏢', query: 'IT Tech Park' },
+];
+
+const fetchSuggestions = async (
+  query: string,
+  signal?: AbortSignal
+): Promise<Suggestion[]> => {
+  if (query.trim().length < 3) return [];
   try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query + ' India')}&limit=5&lang=en`;
-    const res = await fetch(url);
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(
+      query.trim() + ' India'
+    )}&bbox=${INDIA_BBOX}&limit=5&lang=en`;
+    const res = await fetch(url, { signal });
     const data = await res.json();
     if (!data.features) return [];
     return data.features.map((f: any) => {
       const p = f.properties;
       const parts = [p.name, p.street, p.city, p.state].filter(Boolean);
       return {
-        name: p.name || parts[0],
-        full: parts.join(', '),
+        name: p.name || parts[0] || query.trim(),
+        full: parts.join(', ') || query.trim(),
         lat: f.geometry.coordinates[1],
         lng: f.geometry.coordinates[0],
       };
@@ -71,9 +88,17 @@ export default function LocationScreen() {
 
   const pickupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pickupAbortRef = useRef<AbortController | null>(null);
+  const dropAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     loadHistory();
+    return () => {
+      if (pickupTimer.current) clearTimeout(pickupTimer.current);
+      if (dropTimer.current) clearTimeout(dropTimer.current);
+      if (pickupAbortRef.current) pickupAbortRef.current.abort();
+      if (dropAbortRef.current) dropAbortRef.current.abort();
+    };
   }, []);
 
   const loadHistory = async () => {
@@ -83,17 +108,27 @@ export default function LocationScreen() {
     } catch {}
   };
 
-  const saveToHistory = async (pickupAddress: string, destinationAddress: string) => {
+  const saveToHistory = async (pickupLoc: LocationData, destLoc: LocationData) => {
     try {
+      const pickupAddress = pickupLoc.address.trim();
+      const destinationAddress = destLoc.address.trim();
       const newEntry: RouteHistory = {
         pickup: pickupAddress,
         destination: destinationAddress,
+        pickupLat: pickupLoc.lat,
+        pickupLng: pickupLoc.lng,
+        destLat: destLoc.lat,
+        destLng: destLoc.lng,
         timestamp: Date.now(),
       };
       const updated = [
         newEntry,
         ...history.filter(
-          (h) => !(h.pickup === pickupAddress && h.destination === destinationAddress)
+          (h) =>
+            !(
+              h.pickup.toLowerCase() === pickupAddress.toLowerCase() &&
+              h.destination.toLowerCase() === destinationAddress.toLowerCase()
+            )
         ),
       ].slice(0, MAX_HISTORY);
       setHistory(updated);
@@ -102,8 +137,16 @@ export default function LocationScreen() {
   };
 
   const applyHistory = (entry: RouteHistory) => {
-    setPickup({ address: entry.pickup });
-    setDrop({ address: entry.destination });
+    setPickup({
+      address: entry.pickup,
+      lat: entry.pickupLat,
+      lng: entry.pickupLng,
+    });
+    setDrop({
+      address: entry.destination,
+      lat: entry.destLat,
+      lng: entry.destLng,
+    });
     setPickupSuggestions([]);
     setDropSuggestions([]);
   };
@@ -115,26 +158,50 @@ export default function LocationScreen() {
     } catch {}
   };
 
+  const handleSwapLocations = () => {
+    const tempPickup = { ...pickup };
+    setPickup({ ...drop });
+    setDrop(tempPickup);
+    setPickupSuggestions([]);
+    setDropSuggestions([]);
+  };
+
   const onPickupChange = (text: string) => {
     setPickup({ address: text });
     setActiveField('pickup');
     if (pickupTimer.current) clearTimeout(pickupTimer.current);
-    if (text.length < 3) { setPickupSuggestions([]); return; }
+    if (pickupAbortRef.current) pickupAbortRef.current.abort();
+    if (text.trim().length < 3) {
+      setPickupSuggestions([]);
+      return;
+    }
     pickupTimer.current = setTimeout(async () => {
-      const results = await fetchSuggestions(text);
-      setPickupSuggestions(results);
-    }, 400);
+      const controller = new AbortController();
+      pickupAbortRef.current = controller;
+      const results = await fetchSuggestions(text, controller.signal);
+      if (!controller.signal.aborted) {
+        setPickupSuggestions(results);
+      }
+    }, 350);
   };
 
   const onDropChange = (text: string) => {
     setDrop({ address: text });
     setActiveField('drop');
     if (dropTimer.current) clearTimeout(dropTimer.current);
-    if (text.length < 3) { setDropSuggestions([]); return; }
+    if (dropAbortRef.current) dropAbortRef.current.abort();
+    if (text.trim().length < 3) {
+      setDropSuggestions([]);
+      return;
+    }
     dropTimer.current = setTimeout(async () => {
-      const results = await fetchSuggestions(text);
-      setDropSuggestions(results);
-    }, 400);
+      const controller = new AbortController();
+      dropAbortRef.current = controller;
+      const results = await fetchSuggestions(text, controller.signal);
+      if (!controller.signal.aborted) {
+        setDropSuggestions(results);
+      }
+    }, 350);
   };
 
   const selectPickup = (s: Suggestion) => {
@@ -149,6 +216,16 @@ export default function LocationScreen() {
     setActiveField(null);
   };
 
+  const handleQuickHubPress = (hubQuery: string) => {
+    const cityHint = pickup.address.split(',').slice(-2, -1)[0]?.trim() || '';
+    const fullQuery = cityHint ? `${hubQuery}, ${cityHint}` : hubQuery;
+    if (!pickup.address.trim()) {
+      onPickupChange(fullQuery);
+    } else {
+      onDropChange(fullQuery);
+    }
+  };
+
   const getCurrentLocation = async () => {
     try {
       setLoading(true);
@@ -158,23 +235,43 @@ export default function LocationScreen() {
         return;
       }
       const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
+        accuracy: Location.Accuracy.Balanced,
       });
-      const [address] = await Location.reverseGeocodeAsync({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      });
-      if (address) {
-        const addressString = [address.name, address.street, address.city, address.region]
-          .filter(Boolean)
-          .join(', ');
-        setPickup({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          address: addressString,
-        });
-        setPickupSuggestions([]);
+      const { latitude, longitude } = position.coords;
+      let addressString = '';
+
+      try {
+        const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
+        if (address) {
+          addressString = [address.name, address.street, address.city, address.region]
+            .filter(Boolean)
+            .join(', ');
+        }
+      } catch {
+        // Fallback to Photon reverse geocode below
       }
+
+      if (!addressString) {
+        try {
+          const res = await fetch(
+            `https://photon.komoot.io/reverse?lon=${longitude}&lat=${latitude}&lang=en`
+          );
+          const data = await res.json();
+          const p = data?.features?.[0]?.properties;
+          if (p) {
+            addressString = [p.name, p.street, p.city, p.state].filter(Boolean).join(', ');
+          }
+        } catch {
+          // Use coordinate label fallback
+        }
+      }
+
+      setPickup({
+        lat: latitude,
+        lng: longitude,
+        address: addressString || `Current Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`,
+      });
+      setPickupSuggestions([]);
     } catch {
       Alert.alert('Error', 'Failed to get current location.');
     } finally {
@@ -183,12 +280,27 @@ export default function LocationScreen() {
   };
 
   const handleCompare = async () => {
-    if (!pickup.address.trim() || !drop.address.trim()) {
+    const cleanPickup = pickup.address.trim();
+    const cleanDrop = drop.address.trim();
+    if (!cleanPickup || !cleanDrop) {
       Alert.alert('Missing locations', 'Please enter both pickup and drop locations.');
       return;
     }
+    const sameCoords =
+      typeof pickup.lat === 'number' &&
+      typeof pickup.lng === 'number' &&
+      typeof drop.lat === 'number' &&
+      typeof drop.lng === 'number' &&
+      Math.abs(pickup.lat - drop.lat) < 0.0005 &&
+      Math.abs(pickup.lng - drop.lng) < 0.0005;
+
+    if (cleanPickup.toLowerCase() === cleanDrop.toLowerCase() || sameCoords) {
+      Alert.alert('Invalid route', 'Pickup and drop locations cannot be the same.');
+      return;
+    }
+
     setComparing(true);
-    await saveToHistory(pickup.address.trim(), drop.address.trim());
+    await saveToHistory(pickup, drop);
     router.push({
       pathname: '/results',
       params: {
@@ -200,8 +312,9 @@ export default function LocationScreen() {
   };
 
   const timeAgo = (timestamp: number) => {
-    const diff = Date.now() - timestamp;
+    const diff = Math.max(0, Date.now() - timestamp);
     const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
@@ -226,42 +339,76 @@ export default function LocationScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-
-        {/* Route card — pickup + drop together */}
+        {/* Route card — pickup + drop + swap */}
         <View style={styles.routeCard}>
-
           {/* Pickup row */}
           <View style={styles.inputRow}>
             <View style={styles.dotIndicatorGreen} />
             <View style={styles.inputWrapper}>
               <Text style={styles.inputLabel}>Pickup</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Where from?"
-                placeholderTextColor="#94a3b8"
-                value={pickup.address}
-                onChangeText={onPickupChange}
-                onFocus={() => setActiveField('pickup')}
-              />
+              <View style={styles.inputFieldRow}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Where from?"
+                  placeholderTextColor="#94a3b8"
+                  value={pickup.address}
+                  onChangeText={onPickupChange}
+                  onFocus={() => setActiveField('pickup')}
+                />
+                {pickup.address.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.clearInputBtn}
+                    onPress={() => {
+                      setPickup({ address: '' });
+                      setPickupSuggestions([]);
+                    }}
+                  >
+                    <Text style={styles.clearInputText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
 
-          {/* Connector line */}
-          <View style={styles.connectorLine} />
+          {/* Connector line + Swap button */}
+          <View style={styles.connectorRow}>
+            <View style={styles.connectorLine} />
+            <View style={styles.dividerLineHorizontal} />
+            <TouchableOpacity
+              style={styles.swapButton}
+              onPress={handleSwapLocations}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.swapButtonText}>⇅</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* Drop row */}
           <View style={styles.inputRow}>
             <View style={styles.dotIndicatorBlue} />
             <View style={styles.inputWrapper}>
               <Text style={styles.inputLabel}>Drop</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Where to?"
-                placeholderTextColor="#94a3b8"
-                value={drop.address}
-                onChangeText={onDropChange}
-                onFocus={() => setActiveField('drop')}
-              />
+              <View style={styles.inputFieldRow}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Where to?"
+                  placeholderTextColor="#94a3b8"
+                  value={drop.address}
+                  onChangeText={onDropChange}
+                  onFocus={() => setActiveField('drop')}
+                />
+                {drop.address.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.clearInputBtn}
+                    onPress={() => {
+                      setDrop({ address: '' });
+                      setDropSuggestions([]);
+                    }}
+                  >
+                    <Text style={styles.clearInputText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
         </View>
@@ -318,6 +465,25 @@ export default function LocationScreen() {
           {loading && <ActivityIndicator size="small" color="#2563eb" style={{ marginLeft: 8 }} />}
         </TouchableOpacity>
 
+        {/* Quick Destination Hubs */}
+        <View style={styles.hubsSection}>
+          <Text style={styles.historyTitle}>Quick fill</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+            {POPULAR_HUBS.map((hub) => (
+              <TouchableOpacity
+                key={hub.label}
+                style={styles.hubPill}
+                onPress={() => handleQuickHubPress(hub.query)}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.hubPillText}>
+                  {hub.icon} {hub.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
         {/* Recent routes */}
         {history.length > 0 && (
           <View style={styles.historySection}>
@@ -359,6 +525,18 @@ export default function LocationScreen() {
           )}
         </TouchableOpacity>
 
+        {/* BuyHatke-style Trust Strip */}
+        <View style={styles.trustRow}>
+          <View style={styles.trustBadge}>
+            <Text style={styles.trustBadgeText}>✓ Avg 20%+ savings</Text>
+          </View>
+          <View style={styles.trustBadge}>
+            <Text style={styles.trustBadgeText}>✓ Smart Pickup</Text>
+          </View>
+          <View style={styles.trustBadge}>
+            <Text style={styles.trustBadgeText}>✓ No Login Storage</Text>
+          </View>
+        </View>
       </ScrollView>
     </>
   );
@@ -404,12 +582,38 @@ const styles = StyleSheet.create({
     marginTop: 22,
     flexShrink: 0,
   },
+  connectorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 2,
+  },
   connectorLine: {
-    width: 1,
-    height: 12,
-    backgroundColor: '#e2e8f0',
+    width: 2,
+    height: 20,
+    backgroundColor: '#cbd5e1',
     marginLeft: 5,
-    marginVertical: 4,
+  },
+  dividerLineHorizontal: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#f1f5f9',
+    marginLeft: 18,
+    marginRight: 8,
+  },
+  swapButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swapButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#2563eb',
   },
   inputWrapper: {
     flex: 1,
@@ -422,11 +626,25 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 4,
   },
+  inputFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   input: {
+    flex: 1,
     fontSize: 15,
     color: '#0f172a',
     fontWeight: '500',
     paddingVertical: 4,
+  },
+  clearInputBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clearInputText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontWeight: '700',
   },
 
   // Suggestions
@@ -463,7 +681,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#eff6ff',
     borderRadius: 12,
     padding: 14,
-    marginBottom: 24,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: '#bfdbfe',
     gap: 8,
@@ -476,6 +694,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1d4ed8',
     flex: 1,
+  },
+
+  // Quick Hubs
+  hubsSection: {
+    marginBottom: 20,
+  },
+  hubPill: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  hubPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
   },
 
   // History
@@ -533,5 +770,23 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 17,
     fontWeight: '700',
+  },
+  trustRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 20,
+  },
+  trustBadge: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+  },
+  trustBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
   },
 });

@@ -15,8 +15,13 @@ type OpenRideAppOpts = {
 type AppConfig = {
   deepLink: string;
   webUrl: string;
-  buildDeepLink?: (opts: Required<OpenRideAppOpts>) => string;
-  buildWebUrl?: (opts: Required<OpenRideAppOpts>) => string;
+  buildDeepLink?: (opts: OpenRideAppOpts) => string;
+  buildWebUrl?: (opts: OpenRideAppOpts) => string;
+};
+
+const MERU_CONFIG: AppConfig = {
+  deepLink: 'merucabs://open',
+  webUrl: 'https://www.meru.in/',
 };
 
 const APP_CONFIGS: Record<string, AppConfig> = {
@@ -67,6 +72,32 @@ const APP_CONFIGS: Record<string, AppConfig> = {
   Ola: {
     deepLink: 'olacabs://app/launch',
     webUrl: 'https://book.olacabs.com/',
+    buildDeepLink: (opts) => {
+      const params = new URLSearchParams();
+      if (opts.pickupCoords) {
+        params.set('lat', String(opts.pickupCoords.lat));
+        params.set('lng', String(opts.pickupCoords.lng));
+      }
+      if (opts.dropCoords) {
+        params.set('drop_lat', String(opts.dropCoords.lat));
+        params.set('drop_lng', String(opts.dropCoords.lng));
+      }
+      const qs = params.toString();
+      return qs ? `olacabs://app/launch?${qs}` : 'olacabs://app/launch';
+    },
+    buildWebUrl: (opts) => {
+      const params = new URLSearchParams();
+      if (opts.pickupCoords) {
+        params.set('lat', String(opts.pickupCoords.lat));
+        params.set('lng', String(opts.pickupCoords.lng));
+      }
+      if (opts.dropCoords) {
+        params.set('drop_lat', String(opts.dropCoords.lat));
+        params.set('drop_lng', String(opts.dropCoords.lng));
+      }
+      const qs = params.toString();
+      return qs ? `https://book.olacabs.com/?${qs}` : 'https://book.olacabs.com/';
+    },
   },
   Rapido: {
     deepLink: 'in.rapido.passenger://open',
@@ -92,13 +123,11 @@ const APP_CONFIGS: Record<string, AppConfig> = {
     deepLink: 'savaari://open',
     webUrl: 'https://www.savaari.com/',
   },
-  Meru: {
-    deepLink: 'meru://open',
-    webUrl: 'https://www.meru.in/',
-  },
+  Meru: MERU_CONFIG,
+  'Meru Cabs': MERU_CONFIG,
 };
 
-function hasOpts(opts?: OpenRideAppOpts): opts is Required<OpenRideAppOpts> {
+function hasOpts(opts?: OpenRideAppOpts): opts is OpenRideAppOpts {
   return !!(
     opts?.pickupCoords ||
     opts?.dropCoords ||
@@ -112,7 +141,7 @@ function getDeepLink(appName: string, opts?: OpenRideAppOpts): string {
   if (!config) return 'https://google.com/maps';
 
   if (config.buildDeepLink && hasOpts(opts)) {
-    return config.buildDeepLink(opts as Required<OpenRideAppOpts>);
+    return config.buildDeepLink(opts);
   }
 
   return config.deepLink;
@@ -123,7 +152,7 @@ function getWebUrl(appName: string, opts?: OpenRideAppOpts): string {
   if (!config) return 'https://google.com/maps';
 
   if (config.buildWebUrl && hasOpts(opts)) {
-    return config.buildWebUrl(opts as Required<OpenRideAppOpts>);
+    return config.buildWebUrl(opts);
   }
 
   return config.webUrl;

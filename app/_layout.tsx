@@ -19,14 +19,12 @@ export default function RootLayout() {
           headerTintColor: '#fff',
           headerTitleStyle: { color: '#fff' },
           headerShadowVisible: false,
-          headerBackTitleVisible: false,
+          headerBackButtonDisplayMode: 'minimal',
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
         <Stack.Screen name="location" options={{ title: 'Enter Location', headerRight: () => null }} />
         <Stack.Screen name="results" options={{ title: 'Available Rides', headerRight: () => null }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

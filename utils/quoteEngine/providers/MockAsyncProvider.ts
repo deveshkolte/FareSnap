@@ -1,9 +1,10 @@
 import { CityKey } from '../../cityDetector';
+import { estimateFare } from '../../fareEngine';
 import { AsyncRideProvider, FareQuote, ProviderConnection, RideQuoteRequest } from '../types';
 
 export class MockAsyncProvider implements AsyncRideProvider {
   id = 'mock_async_namma_yatri';
-  name = 'Namma Yatri'; // Pretend to be Namma Yatri for testing UI
+  name = 'Namma Yatri';
   type = 'async' as const;
   
   private callback?: (reqId: string, quotes: FareQuote[], error?: Error) => void;
@@ -11,12 +12,13 @@ export class MockAsyncProvider implements AsyncRideProvider {
   async getConnectionStatus(): Promise<ProviderConnection> {
     return {
       providerId: this.id,
-      status: 'connected', // Assume connected for mock
+      status: 'connected',
     };
   }
 
   async isAvailable(city: CityKey): Promise<boolean> {
-    return true; // Available everywhere for mock
+    const est = estimateFare('Namma Yatri', city, 5, 15);
+    return est.available;
   }
 
   onQuoteResult(callback: (reqId: string, quotes: FareQuote[], error?: Error) => void): void {
@@ -29,12 +31,17 @@ export class MockAsyncProvider implements AsyncRideProvider {
     // Simulate async network delay (e.g., ONDC on_select webhook arriving later)
     setTimeout(() => {
       if (this.callback) {
+        const est = estimateFare('Namma Yatri', request.city, request.distanceKm, request.durationMin);
+        if (!est.available) {
+          this.callback(reqId, []);
+          return;
+        }
         const quotes: FareQuote[] = [
           {
             providerId: this.id,
             providerName: this.name,
             rideType: 'Auto',
-            price: 142,
+            price: est.low,
             currency: 'INR',
             etaMinutes: 4,
             distanceKm: request.distanceKm,
@@ -42,11 +49,15 @@ export class MockAsyncProvider implements AsyncRideProvider {
             confidence: 'live',
             fetchedAt: new Date().toISOString(),
             isAvailable: true,
+            metadata: {
+              highEstimate: est.high,
+              isSurge: est.isSurge,
+            },
           }
         ];
         this.callback(reqId, quotes);
       }
-    }, 2000);
+    }, 1200);
     
     return reqId;
   }
