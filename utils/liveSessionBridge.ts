@@ -9,6 +9,7 @@ export type ScrapedLiveProduct = {
   category: 'Bike' | 'Auto' | 'Cab';
   price: number;
   etaMinutes: number | null;
+  estimateId?: string;
   rawText?: string;
 };
 

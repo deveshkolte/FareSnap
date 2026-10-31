@@ -203,6 +203,7 @@ export async function fetchNammaYatriLiveFares(opts: {
               etaMinutes: est.estimatedPickupDuration
                 ? Math.max(1, Math.round(Number(est.estimatedPickupDuration) / 60))
                 : 3,
+              estimateId: est.id ? String(est.id) : undefined,
             };
           })
           .filter((p): p is ScrapedLiveProduct => p !== null);
@@ -211,4 +212,43 @@ export async function fetchNammaYatriLiveFares(opts: {
   } catch {}
 
   return [];
+}
+
+/**
+ * Triggers direct in-app ride booking on Namma Yatri (`POST /estimate/{estimateId}/select2`)
+ * when the user has linked their Namma Yatri account via OTP and received a live `estimateId`.
+ */
+export async function bookNammaYatriEstimate(
+  estimateId: string
+): Promise<{ booked: boolean; message?: string }> {
+  const token = await getStoredNammaYatriToken();
+  if (!token || !estimateId) {
+    return { booked: false };
+  }
+
+  try {
+    const res = await fetch(
+      `${NY_API_BASE}/estimate/${encodeURIComponent(estimateId)}/select2`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          token,
+        },
+        body: JSON.stringify({
+          customerExtraFee: 0,
+          autoAssignEnabled: true,
+          autoAssignEnabledV2: true,
+        }),
+      }
+    );
+    if (res.ok) {
+      return {
+        booked: true,
+        message: 'Namma Yatri driver search initiated on your account!',
+      };
+    }
+  } catch {}
+
+  return { booked: false };
 }
