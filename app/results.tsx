@@ -19,6 +19,10 @@ import { LiveFareScraperPool } from '../components/LiveFareScraperPool';
 import { RoutePreviewMapModal } from '../components/RoutePreviewMapModal';
 import { openRideApp, openWalkingDirections } from '../utils/appUrls';
 import { CityKey, detectCity } from '../utils/cityDetector';
+import {
+  getSavedCommuteRoute,
+  saveCommuteRoute,
+} from '../utils/commuteGuard';
 import { getRoadDistance, RouteCoords } from '../utils/distanceEngine';
 import {
   estimateFare,
@@ -611,6 +615,8 @@ export default function ResultsScreen() {
   const [surgeTimerSeconds, setSurgeTimerSeconds] = useState<number | null>(
     null
   );
+  const [copiedDestToast, setCopiedDestToast] = useState<string | null>(null);
+  const [commutePinned, setCommutePinned] = useState(false);
 
   // Linked Providers & Real Scraped Live Products from WebView Pool
   const [linkModalVisible, setLinkModalVisible] = useState(false);
@@ -689,7 +695,18 @@ export default function ResultsScreen() {
     getLinkedProviders().then(setLinkedProviders).catch(() => {});
     getLifetimeSavings().then(setLifetimeSavings).catch(() => {});
     refreshRemoteScraperConfig().catch(() => {});
-  }, []);
+    getSavedCommuteRoute()
+      .then((saved) => {
+        if (
+          saved &&
+          saved.pickup.toLowerCase() === pickup.address.toLowerCase() &&
+          saved.destination.toLowerCase() === destination.address.toLowerCase()
+        ) {
+          setCommutePinned(true);
+        }
+      })
+      .catch(() => {});
+  }, [pickup.address, destination.address]);
 
   const activeDistanceKm =
     smartPickupEnabled && smartPickup
@@ -870,6 +887,16 @@ export default function ResultsScreen() {
             ...prev,
             namma_yatri: products,
           }));
+          if (activeDistanceKm > 0) {
+            reportFare({
+              app: 'Namma Yatri',
+              city,
+              pickup_area: pickup.address.split(',')[0].trim(),
+              distance_km: activeDistanceKm,
+              quoted_fare: products[0].price,
+              app_version: '1.0.0',
+            }).catch(() => {});
+          }
         }
       })
       .catch(() => {});
@@ -1296,7 +1323,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
     setTimeout(async () => {
       pendingBookRideRef.current = selectedRide;
       try {
-        await openRideApp(selectedRide.providerName, {
+        const res = await openRideApp(selectedRide.providerName, {
           pickupCoords: activePickupCoords,
           dropCoords: resolvedDropCoords,
           pickupAddress:
@@ -1305,6 +1332,7 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
               : pickup.address,
           dropAddress: destination.address,
         });
+        setCopiedDestToast(res.copiedAddress || null);
       } catch {}
 
       setTimeout(() => {
@@ -1440,6 +1468,30 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           headerShadowVisible: false,
           headerRight: () => (
             <View style={styles.headerRightRow}>
+              <TouchableOpacity
+                style={styles.headerLinkBtn}
+                onPress={async () => {
+                  if (commutePinned) {
+                    await saveCommuteRoute(null);
+                    setCommutePinned(false);
+                  } else {
+                    await saveCommuteRoute({
+                      pickup: pickup.address,
+                      destination: destination.address,
+                      pickupLat: resolvedPickupCoords?.lat,
+                      pickupLng: resolvedPickupCoords?.lng,
+                      destLat: resolvedDropCoords?.lat,
+                      destLng: resolvedDropCoords?.lng,
+                      updatedAt: Date.now(),
+                    });
+                    setCommutePinned(true);
+                  }
+                }}
+              >
+                <Text style={styles.headerLinkBtnText}>
+                  {commutePinned ? '📌 Pinned' : '📌 Pin'}
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.headerLinkBtn}
                 onPress={() => {
@@ -2217,6 +2269,14 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   To {destination.address.split(',')[0]} · ~{activeDurationMin}{' '}
                   Mins | {activeDistanceKm} KM
                 </Text>
+                {copiedDestToast && (
+                  <View style={styles.clipboardToastPill}>
+                    <Text style={styles.clipboardToastText}>
+                      📋 Copied &quot;{copiedDestToast}&quot; to clipboard — just paste in{' '}
+                      {selectedRide?.providerName}!
+                    </Text>
+                  </View>
+                )}
                 <TouchableOpacity
                   style={[
                     styles.sheetCancelBtn,
@@ -2579,6 +2639,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#4338ca',
+  },
+  clipboardToastPill: {
+    marginTop: 10,
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  clipboardToastText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1d4ed8',
+    textAlign: 'center',
   },
   linkBannerPrompt: {
     backgroundColor: '#eef2ff',

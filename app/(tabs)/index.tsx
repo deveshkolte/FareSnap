@@ -13,6 +13,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  CommuteGuardStatus,
+  evaluateCommuteGuard,
+} from '../../utils/commuteGuard';
+import {
   getLifetimeSavings,
   LifetimeSavingsData,
 } from '../../utils/liveSessionBridge';
@@ -52,6 +56,9 @@ export default function HomeScreen() {
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [recentRoutes, setRecentRoutes] = useState<RouteHistoryItem[]>([]);
+  const [commuteGuard, setCommuteGuard] = useState<CommuteGuardStatus | null>(
+    null
+  );
   const [savings, setSavings] = useState<LifetimeSavingsData>({
     totalSaved: 0,
     tripCount: 0,
@@ -74,10 +81,26 @@ export default function HomeScreen() {
           getLifetimeSavings(),
         ]);
         setShowOnboarding(!onboarded);
+        let parsedHistory: RouteHistoryItem[] = [];
         if (rawHistory) {
-          setRecentRoutes(JSON.parse(rawHistory));
+          parsedHistory = JSON.parse(rawHistory);
+          setRecentRoutes(parsedHistory);
         }
         setSavings(lifeSavings);
+        const topFallback = parsedHistory[0]
+          ? {
+              pickup: parsedHistory[0].pickup,
+              destination: parsedHistory[0].destination,
+              pickupLat: parsedHistory[0].pickupLat,
+              pickupLng: parsedHistory[0].pickupLng,
+              destLat: parsedHistory[0].destLat,
+              destLng: parsedHistory[0].destLng,
+              updatedAt: parsedHistory[0].timestamp,
+            }
+          : undefined;
+        evaluateCommuteGuard(topFallback)
+          .then((cg) => setCommuteGuard(cg))
+          .catch(() => {});
       } catch {
         setShowOnboarding(false);
       }
@@ -240,6 +263,41 @@ export default function HomeScreen() {
               💰 You&apos;ve saved ₹{savings.totalSaved.toLocaleString('en-IN')}{' '}
               across {savings.tripCount}{' '}
               {savings.tripCount === 1 ? 'ride' : 'rides'} ›
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Commute Guard Proactive Alert Card */}
+        {commuteGuard && (
+          <TouchableOpacity
+            style={[
+              styles.commuteGuardCard,
+              commuteGuard.isAlert && styles.commuteGuardCardAlert,
+            ]}
+            onPress={() =>
+              router.push({
+                pathname: '/results',
+                params: {
+                  pickup: JSON.stringify({
+                    address: commuteGuard.route.pickup,
+                    lat: commuteGuard.route.pickupLat,
+                    lng: commuteGuard.route.pickupLng,
+                  }),
+                  destination: JSON.stringify({
+                    address: commuteGuard.route.destination,
+                    lat: commuteGuard.route.destLat,
+                    lng: commuteGuard.route.destLng,
+                  }),
+                },
+              })
+            }
+            activeOpacity={0.85}
+          >
+            <Text style={styles.commuteGuardHeadline} numberOfLines={1}>
+              {commuteGuard.headline}
+            </Text>
+            <Text style={styles.commuteGuardSub} numberOfLines={2}>
+              {commuteGuard.subline}
             </Text>
           </TouchableOpacity>
         )}
@@ -514,6 +572,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#15803d',
+  },
+  commuteGuardCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginHorizontal: 24,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  commuteGuardCardAlert: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  commuteGuardHeadline: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  commuteGuardSub: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 2,
+    lineHeight: 16,
   },
   searchTriggerBox: {
     flexDirection: 'row',

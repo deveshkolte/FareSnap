@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { Linking } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 
@@ -181,34 +182,42 @@ export async function openWalkingDirections(
 export async function openRideApp(
   appName: string,
   opts?: OpenRideAppOpts
-): Promise<{ handoffHasCoords: boolean }> {
+): Promise<{ handoffHasCoords: boolean; copiedAddress?: string }> {
   const deepLink = getDeepLink(appName, opts);
   const webUrl = getWebUrl(appName, opts);
   const handoffHasCoords = supportsCoordinateHandoff(appName);
+  let copiedAddress: string | undefined;
 
-  // Best-effort copy destination address on web/supported runtimes when app lacks coordinate deep links
+  // Copy destination address to native & web clipboard when app lacks coordinate deep links
   if (!handoffHasCoords && opts?.dropAddress) {
+    const shortDest = opts.dropAddress.split(',').slice(0, 2).join(', ').trim();
     try {
-      if (
-        typeof navigator !== 'undefined' &&
-        navigator.clipboard &&
-        typeof navigator.clipboard.writeText === 'function'
-      ) {
-        await navigator.clipboard.writeText(opts.dropAddress);
-      }
-    } catch {}
+      await Clipboard.setStringAsync(shortDest);
+      copiedAddress = shortDest;
+    } catch {
+      try {
+        if (
+          typeof navigator !== 'undefined' &&
+          navigator.clipboard &&
+          typeof navigator.clipboard.writeText === 'function'
+        ) {
+          await navigator.clipboard.writeText(shortDest);
+          copiedAddress = shortDest;
+        }
+      } catch {}
+    }
   }
 
   try {
     const canOpen = await Linking.canOpenURL(deepLink);
     if (canOpen) {
       await Linking.openURL(deepLink);
-      return { handoffHasCoords };
+      return { handoffHasCoords, copiedAddress };
     }
   } catch {
     // fall through to web fallback
   }
 
   await WebBrowser.openBrowserAsync(webUrl);
-  return { handoffHasCoords };
+  return { handoffHasCoords, copiedAddress };
 }
