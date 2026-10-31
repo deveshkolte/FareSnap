@@ -45,8 +45,40 @@ const GEMINI_API_KEY =
 // In-memory store of active ONDC transaction_id -> { status, quotes, createdAt, request }
 const transactions = new Map();
 
-// Waze-style crowdsourced fare & surge report pool (in-memory ring buffer of last 500 reports)
-const fareReportsPool = [];
+// Waze-style crowdsourced fare & surge report pool (file-backed ring buffer of last 500 reports)
+const DATA_DIR = path.resolve(__dirname, 'data');
+const FARE_REPORTS_FILE = path.resolve(DATA_DIR, 'fare_reports.json');
+
+const SEED_FARE_REPORTS = [
+  { id: 1, app: 'Namma Yatri', city: 'bangalore', pickup_area: 'MG Road', distance_km: 6.4, quoted_fare: 118, created_at: new Date().toISOString() },
+  { id: 2, app: 'Rapido', city: 'bangalore', pickup_area: 'Koramangala', distance_km: 5.2, quoted_fare: 62, created_at: new Date().toISOString() },
+  { id: 3, app: 'Uber', city: 'bangalore', pickup_area: 'Indiranagar', distance_km: 7.5, quoted_fare: 215, created_at: new Date().toISOString() },
+  { id: 4, app: 'Ola', city: 'mumbai', pickup_area: 'Andheri West', distance_km: 8.1, quoted_fare: 230, created_at: new Date().toISOString() },
+  { id: 5, app: 'Uber', city: 'delhi', pickup_area: 'Connaught Place', distance_km: 9.0, quoted_fare: 225, created_at: new Date().toISOString() },
+];
+
+function loadPersistedFareReports() {
+  try {
+    if (fs.existsSync(FARE_REPORTS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(FARE_REPORTS_FILE, 'utf8'));
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.slice(0, 500);
+      }
+    }
+  } catch {}
+  return [...SEED_FARE_REPORTS];
+}
+
+function savePersistedFareReports(pool) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(FARE_REPORTS_FILE, JSON.stringify(pool.slice(0, 500), null, 2));
+  } catch {}
+}
+
+const fareReportsPool = loadPersistedFareReports();
 
 // Cleanup old transactions every 5 minutes
 setInterval(() => {
@@ -599,6 +631,7 @@ function createServer() {
             if (fareReportsPool.length > 500) {
               fareReportsPool.length = 500;
             }
+            savePersistedFareReports(fareReportsPool);
           }
           return sendJson(res, 201, { ok: true });
         } catch (err) {
