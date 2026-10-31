@@ -588,7 +588,8 @@ export const getHourlyFareForecast = (
   appName: string,
   city: CityKey,
   distanceKm: number,
-  durationMin: number
+  durationMin: number,
+  upcomingWeatherMultipliers?: number[]
 ): HourlyForecastPoint[] => {
   const configKey = getConfigKey(appName) || 'UberGo';
   const appConfig = FARE_CONFIG[configKey] || FARE_CONFIG.UberGo;
@@ -600,7 +601,7 @@ export const getHourlyFareForecast = (
   const raw =
     rates.baseFare + rates.perKm * distanceKm + rates.perMin * durationMin;
 
-  const points = offsets.map((offsetMins) => {
+  const points = offsets.map((offsetMins, idx) => {
     const slotTime = new Date(now.getTime() + offsetMins * 60_000);
     const sType = getSurgeTypeForHour(
       slotTime.getHours(),
@@ -612,7 +613,13 @@ export const getHourlyFareForecast = (
         : offsetMins >= 30 && sType === 'peak'
           ? 0.91
           : 1.0;
-    const mult = appConfig.surge[sType] * microFactor;
+    const weatherSlotMult =
+      appConfig.surge.peak > 1.0 &&
+      upcomingWeatherMultipliers &&
+      typeof upcomingWeatherMultipliers[idx] === 'number'
+        ? upcomingWeatherMultipliers[idx]
+        : 1.0;
+    const mult = appConfig.surge[sType] * microFactor * weatherSlotMult;
     const est = Math.round(Math.max(raw * mult, rates.minFare));
 
     const label = offsetMins === 0 ? 'Now' : `+${offsetMins}m`;
