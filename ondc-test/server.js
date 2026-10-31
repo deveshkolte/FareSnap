@@ -372,6 +372,67 @@ function createServer() {
       });
     }
 
+    // Phone QR Launcher (No Expo Go required)
+    if (req.method === 'GET' && url.pathname === '/phone') {
+      const lanUrl = process.env.PHONE_WEB_URL || 'http://192.168.254.93:8081';
+      const apkBuildUrl =
+        process.env.EAS_APK_BUILD_URL ||
+        'https://expo.dev/accounts/devesh.kolte/projects/faresnap/builds/98dde0a5-6623-4383-a01e-eb6de749cccb';
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Open FareSnap on Phone (No Expo Go)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; padding: 32px; display: flex; flex-direction: column; align-items: center; }
+    h1 { font-size: 28px; font-weight: 800; margin-bottom: 6px; }
+    p.sub { color: #64748b; margin-top: 0; margin-bottom: 28px; font-size: 15px; }
+    .grid { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; max-width: 860px; }
+    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; width: 340px; text-align: center; box-shadow: 0 4px 16px rgba(15,23,42,0.05); }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-bottom: 12px; }
+    .badge-blue { background: #eff6ff; color: #2563eb; }
+    .badge-green { background: #f0fdf4; color: #16a34a; }
+    h2 { font-size: 19px; margin: 4px 0 8px; }
+    .desc { font-size: 13px; color: #64748b; line-height: 1.5; margin-bottom: 16px; }
+    img.qr { width: 220px; height: 220px; border-radius: 12px; border: 1px solid #e2e8f0; padding: 8px; background: #fff; }
+    a.btn { display: block; margin-top: 16px; padding: 12px 16px; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 14px; }
+    a.btn-blue { background: #2563eb; color: #fff; }
+    a.btn-indigo { background: #4338ca; color: #fff; }
+    code { display: block; margin-top: 10px; font-size: 12px; color: #475569; background: #f1f5f9; padding: 6px; border-radius: 6px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>📱 Open FareSnap on Your Phone (No Expo Go)</h1>
+  <p class="sub">The terminal QR code uses <code>exp://</code> (which only works in Expo Go). Scan either standard QR code below with your normal phone camera:</p>
+  <div class="grid">
+    <div class="card">
+      <span class="badge badge-blue">INSTANT · CHROME / SAFARI</span>
+      <h2>1. Open Immediately in Phone Browser</h2>
+      <p class="desc">Make sure your phone is on the same Wi-Fi network as this Mac, then scan with your phone camera:</p>
+      <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
+        lanUrl
+      )}" alt="Phone Web QR" />
+      <code>${lanUrl}</code>
+      <a class="btn btn-blue" href="${lanUrl}" target="_blank">Open Web App →</a>
+    </div>
+    <div class="card">
+      <span class="badge badge-green">STANDALONE ANDROID APK</span>
+      <h2>2. Install Native Android APK</h2>
+      <p class="desc">Real standalone Android app (not Expo Go) with full native WebView live fare scraping:</p>
+      <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
+        apkBuildUrl
+      )}" alt="EAS APK QR" />
+      <code>EAS Build #98dde0a5</code>
+      <a class="btn btn-indigo" href="${apkBuildUrl}" target="_blank">Open APK Build & Download Page →</a>
+    </div>
+  </div>
+</body>
+</html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+
     // 1. POST /ondc/search — Initiates a Beckn ONDC:TRV10 search
     if (req.method === 'POST' && url.pathname === '/ondc/search') {
       try {
