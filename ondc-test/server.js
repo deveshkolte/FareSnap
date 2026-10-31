@@ -180,13 +180,21 @@ function buildSandboxBecknOnSearch(transactionId, reqData) {
   const min = Math.max(3, Number(reqData.durationMin || 15));
   const city = reqData.city || 'bangalore';
 
-  const autoBase = city === 'bangalore' ? 30 : city === 'delhi' ? 25 : 28;
-  const autoPerKm = city === 'bangalore' ? 15 : city === 'delhi' ? 11 : 14;
-  const autoPrice = Math.max(50, Math.round(autoBase + Math.max(0, km - 2) * autoPerKm));
+  const autoBase = city === 'bangalore' ? 36 : city === 'delhi' ? 32 : 34;
+  const autoPerKm = city === 'bangalore' ? 11.0 : city === 'delhi' ? 10.0 : 10.5;
+  const autoPerMin = city === 'bangalore' ? 0.75 : 0.7;
+  const autoPrice = Math.max(
+    55,
+    Math.round(autoBase + km * autoPerKm + min * autoPerMin)
+  );
 
-  const cabBase = city === 'bangalore' ? 42 : 40;
-  const cabPerKm = city === 'bangalore' ? 13.5 : 12.5;
-  const cabPrice = Math.max(75, Math.round(cabBase + km * cabPerKm + min * 0.5));
+  const cabBase = city === 'bangalore' ? 50 : 46;
+  const cabPerKm = city === 'bangalore' ? 15.2 : 14.2;
+  const cabPerMin = city === 'bangalore' ? 1.25 : 1.15;
+  const cabPrice = Math.max(
+    90,
+    Math.round(cabBase + km * cabPerKm + min * cabPerMin)
+  );
 
   return {
     context: {

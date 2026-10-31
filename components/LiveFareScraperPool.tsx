@@ -69,7 +69,12 @@ export function LiveFareScraperPool({
           dropLng,
           dropAddress,
         });
-        const script = buildProviderScraperScript(provider.id);
+        const script = buildProviderScraperScript(provider.id, {
+          pickupLat,
+          pickupLng,
+          dropLat,
+          dropLng,
+        });
 
         return (
           <View key={provider.id} style={styles.singleWebViewBox}>

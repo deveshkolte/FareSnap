@@ -143,12 +143,24 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
  * product rows, normalizes them into `ScrapedLiveProduct[]`, and detects whether
  * the user is actually logged in or sitting on an auth/OTP wall.
  */
-export const buildProviderScraperScript = (providerId: LinkableProviderId): string => `
+export const buildProviderScraperScript = (
+  providerId: LinkableProviderId,
+  coords?: {
+    pickupLat?: number;
+    pickupLng?: number;
+    dropLat?: number;
+    dropLng?: number;
+  }
+): string => `
 (function() {
   if (window.__bhPageApiHook_${providerId}) return;
   window.__bhPageApiHook_${providerId} = true;
 
   var PROVIDER_ID = '${providerId}';
+  var P_LAT = ${coords?.pickupLat ?? 'null'};
+  var P_LNG = ${coords?.pickupLng ?? 'null'};
+  var D_LAT = ${coords?.dropLat ?? 'null'};
+  var D_LNG = ${coords?.dropLng ?? 'null'};
   var PROVIDER_NAME =
     PROVIDER_ID === 'uber' ? 'Uber' :
     PROVIDER_ID === 'ola' ? 'Ola' :
@@ -418,6 +430,42 @@ export const buildProviderScraperScript = (providerId: LinkableProviderId): stri
 
   setInterval(scanDomForProductsAndAuth, 2000);
   setTimeout(scanDomForProductsAndAuth, 800);
+
+  // 5. Active Direct API Probes inside authenticated WebView origin (BuyHatke approach)
+  setTimeout(function() {
+    try {
+      // A) Ola direct category-availability API call from book.olacabs.com origin
+      if (PROVIDER_ID === 'ola' && P_LAT && P_LNG && D_LAT && D_LNG && location.hostname.indexOf('olacabs.com') !== -1) {
+        var olaUrl = '/data-api/category-availability/p2p?pickupLat=' + encodeURIComponent(P_LAT) +
+          '&pickupLng=' + encodeURIComponent(P_LNG) +
+          '&dropLat=' + encodeURIComponent(D_LAT) +
+          '&dropLng=' + encodeURIComponent(D_LNG) +
+          '&serviceType=p2p&Silent=true';
+        fetch(olaUrl, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'accept': 'application/json',
+            'x-requested-with': 'XMLHttpRequest'
+          }
+        }).then(function(r) { return r.json(); }).then(function(data) {
+          handleJsonPayload(data);
+        }).catch(function() {});
+      }
+
+      // B) Uber auto-confirm pickup step so m.uber.com triggers /go/graphql Products query
+      if (PROVIDER_ID === 'uber' && location.hostname.indexOf('uber.com') !== -1) {
+        var confirmBtns = document.querySelectorAll('[data-testid*="confirm"], button');
+        for (var i = 0; i < confirmBtns.length; i++) {
+          var bTxt = (confirmBtns[i].innerText || '').toLowerCase();
+          if (bTxt === 'confirm pickup' || bTxt === 'search' || bTxt === 'see prices') {
+            confirmBtns[i].click();
+            break;
+          }
+        }
+      }
+    } catch (e) {}
+  }, 1400);
 })();
 true;
 `;
