@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -11,6 +12,20 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  getLifetimeSavings,
+  LifetimeSavingsData,
+} from '../../utils/liveSessionBridge';
+
+type RouteHistoryItem = {
+  pickup: string;
+  destination: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  destLat?: number;
+  destLng?: number;
+  timestamp: number;
+};
 
 const SLIDES = [
   {
@@ -36,6 +51,12 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [recentRoutes, setRecentRoutes] = useState<RouteHistoryItem[]>([]);
+  const [savings, setSavings] = useState<LifetimeSavingsData>({
+    totalSaved: 0,
+    tripCount: 0,
+    lastTripSaved: 0,
+  });
 
   // Home screen fade in
   const homeFade = useRef(new Animated.Value(0)).current;
@@ -47,8 +68,16 @@ export default function HomeScreen() {
   useEffect(() => {
     const check = async () => {
       try {
-        const onboarded = await AsyncStorage.getItem('faresnap_onboarded');
+        const [onboarded, rawHistory, lifeSavings] = await Promise.all([
+          AsyncStorage.getItem('faresnap_onboarded'),
+          AsyncStorage.getItem('faresnap_route_history'),
+          getLifetimeSavings(),
+        ]);
         setShowOnboarding(!onboarded);
+        if (rawHistory) {
+          setRecentRoutes(JSON.parse(rawHistory));
+        }
+        setSavings(lifeSavings);
       } catch {
         setShowOnboarding(false);
       }
@@ -201,6 +230,32 @@ export default function HomeScreen() {
           ))}
         </View>
 
+        {savings.totalSaved > 0 && (
+          <TouchableOpacity
+            style={styles.savingsBanner}
+            onPress={() => router.push('/spend' as any)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.savingsBannerText}>
+              💰 You&apos;ve saved ₹{savings.totalSaved.toLocaleString('en-IN')}{' '}
+              across {savings.tripCount}{' '}
+              {savings.tripCount === 1 ? 'ride' : 'rides'} ›
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Instant Where To Search Bar */}
+        <TouchableOpacity
+          style={styles.searchTriggerBox}
+          onPress={() => router.push('/location')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.searchTriggerIcon}>🔍</Text>
+          <Text style={styles.searchTriggerPlaceholder}>
+            Where to? Enter pickup & drop...
+          </Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.primaryButton}
           onPress={() => router.push('/location')}
@@ -209,9 +264,50 @@ export default function HomeScreen() {
           <Text style={styles.primaryButtonText}>Compare rides</Text>
         </TouchableOpacity>
 
-        <Text style={styles.homeHint}>
-          Enter pickup and drop to compare fares across all apps
-        </Text>
+        {recentRoutes.length > 0 ? (
+          <View style={styles.recentHomeSection}>
+            <Text style={styles.recentHomeLabel}>1-Tap Recent Routes</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recentScrollRow}
+            >
+              {recentRoutes.slice(0, 4).map((r, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={styles.recentChip}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/results',
+                      params: {
+                        pickup: JSON.stringify({
+                          address: r.pickup,
+                          lat: r.pickupLat,
+                          lng: r.pickupLng,
+                        }),
+                        destination: JSON.stringify({
+                          address: r.destination,
+                          lat: r.destLat,
+                          lng: r.destLng,
+                        }),
+                      },
+                    })
+                  }
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.recentChipTitle} numberOfLines={1}>
+                    {r.pickup.split(',')[0]} → {r.destination.split(',')[0]}
+                  </Text>
+                  <Text style={styles.recentChipSub}>Tap to compare ›</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        ) : (
+          <Text style={styles.homeHint}>
+            Enter pickup and drop to compare fares across all apps
+          </Text>
+        )}
       </Animated.View>
     </View>
   );
@@ -402,6 +498,79 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#1d4ed8',
+  },
+  savingsBanner: {
+    alignSelf: 'center',
+    backgroundColor: '#f0fdf4',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    marginTop: -24,
+    marginBottom: 20,
+  },
+  savingsBannerText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#15803d',
+  },
+  searchTriggerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginHorizontal: 24,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    gap: 10,
+  },
+  searchTriggerIcon: {
+    fontSize: 16,
+  },
+  searchTriggerPlaceholder: {
+    fontSize: 15,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  recentHomeSection: {
+    marginTop: 4,
+  },
+  recentHomeLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginLeft: 24,
+    marginBottom: 8,
+  },
+  recentScrollRow: {
+    paddingHorizontal: 24,
+    gap: 10,
+  },
+  recentChip: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    maxWidth: 210,
+  },
+  recentChipTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  recentChipSub: {
+    fontSize: 11,
+    color: '#2563eb',
+    fontWeight: '600',
+    marginTop: 2,
   },
   homeHint: {
     fontSize: 13,
