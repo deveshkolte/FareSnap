@@ -372,9 +372,25 @@ function createServer() {
       });
     }
 
-    // Phone QR Launcher (No Expo Go required)
+    // Phone QR Launcher (Expo Go Tunnel + Web + APK)
     if (req.method === 'GET' && url.pathname === '/phone') {
-      const lanUrl = process.env.PHONE_WEB_URL || 'http://192.168.254.93:8081';
+      let tunnelUrl =
+        process.env.EXPO_TUNNEL_URL ||
+        'exp://3gde_ay-deveshkolte-8090.exp.direct';
+      try {
+        const mfRes = await fetch('http://localhost:8090', {
+          headers: { 'expo-platform': 'android' },
+        });
+        if (mfRes.ok) {
+          const mfJson = await mfRes.json();
+          const hostUri = mfJson?.extra?.expoClient?.hostUri;
+          if (hostUri) {
+            tunnelUrl = `exp://${hostUri}`;
+          }
+        }
+      } catch {}
+
+      const lanUrl = process.env.PHONE_WEB_URL || 'http://192.168.254.93:8090';
       const apkBuildUrl =
         process.env.EAS_APK_BUILD_URL ||
         'https://expo.dev/accounts/devesh.kolte/projects/faresnap/builds/98dde0a5-6623-4383-a01e-eb6de749cccb';
@@ -383,13 +399,14 @@ function createServer() {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Open FareSnap on Phone (No Expo Go)</title>
+  <title>Scan with Expo Go (Tunnel Active)</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f8fafc; color: #0f172a; margin: 0; padding: 32px; display: flex; flex-direction: column; align-items: center; }
     h1 { font-size: 28px; font-weight: 800; margin-bottom: 6px; }
-    p.sub { color: #64748b; margin-top: 0; margin-bottom: 28px; font-size: 15px; }
-    .grid { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; max-width: 860px; }
-    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; width: 340px; text-align: center; box-shadow: 0 4px 16px rgba(15,23,42,0.05); }
+    p.sub { color: #64748b; margin-top: 0; margin-bottom: 28px; font-size: 15px; max-width: 720px; text-align: center; line-height: 1.5; }
+    .grid { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; max-width: 1120px; }
+    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; width: 310px; text-align: center; box-shadow: 0 4px 16px rgba(15,23,42,0.05); }
+    .card-featured { border: 2px solid #2563eb; box-shadow: 0 8px 24px rgba(37,99,235,0.14); }
     .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-bottom: 12px; }
     .badge-blue { background: #eff6ff; color: #2563eb; }
     .badge-green { background: #f0fdf4; color: #16a34a; }
@@ -399,32 +416,31 @@ function createServer() {
     a.btn { display: block; margin-top: 16px; padding: 12px 16px; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 14px; }
     a.btn-blue { background: #2563eb; color: #fff; }
     a.btn-indigo { background: #4338ca; color: #fff; }
-    code { display: block; margin-top: 10px; font-size: 12px; color: #475569; background: #f1f5f9; padding: 6px; border-radius: 6px; word-break: break-all; }
+    code { display: block; margin-top: 10px; font-size: 12px; color: #0f172a; font-weight: 700; background: #f1f5f9; padding: 8px; border-radius: 6px; word-break: break-all; }
   </style>
 </head>
 <body>
-  <h1>📱 Open FareSnap on Your Phone (No Expo Go)</h1>
-  <p class="sub">The terminal QR code uses <code>exp://</code> (which only works in Expo Go). Scan either standard QR code below with your normal phone camera:</p>
+  <h1>🚀 Open FareSnap in Expo Go on Your Phone</h1>
+  <p class="sub">Your Wi-Fi network (<code>192.168.254.93</code>) blocks direct LAN connections between devices. I started an <b>Expo Cloud Tunnel</b> so your phone connects from <b>any Wi-Fi or 5G network</b>!</p>
   <div class="grid">
-    <div class="card">
-      <span class="badge badge-blue">INSTANT · CHROME / SAFARI</span>
-      <h2>1. Open Immediately in Phone Browser</h2>
-      <p class="desc">Make sure your phone is on the same Wi-Fi network as this Mac, then scan with your phone camera:</p>
+    <div class="card card-featured">
+      <span class="badge badge-green">WORKS ON ANY WIFI OR 5G · EXPO GO</span>
+      <h2>1. Scan with Expo Go App</h2>
+      <p class="desc">Scan this QR code inside the <b>Expo Go</b> app on Android (or iPhone Camera), or paste the URL manually into Expo Go:</p>
       <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
-        lanUrl
-      )}" alt="Phone Web QR" />
-      <code>${lanUrl}</code>
-      <a class="btn btn-blue" href="${lanUrl}" target="_blank">Open Web App →</a>
+        tunnelUrl
+      )}" alt="Expo Go Tunnel QR" />
+      <code>${tunnelUrl}</code>
     </div>
     <div class="card">
-      <span class="badge badge-green">STANDALONE ANDROID APK</span>
+      <span class="badge badge-blue">STANDALONE ANDROID APK</span>
       <h2>2. Install Native Android APK</h2>
-      <p class="desc">Real standalone Android app (not Expo Go) with full native WebView live fare scraping:</p>
+      <p class="desc">Want a standalone Android app without Expo Go? Scan to open the EAS APK Download page:</p>
       <img class="qr" src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
         apkBuildUrl
       )}" alt="EAS APK QR" />
       <code>EAS Build #98dde0a5</code>
-      <a class="btn btn-indigo" href="${apkBuildUrl}" target="_blank">Open APK Build & Download Page →</a>
+      <a class="btn btn-indigo" href="${apkBuildUrl}" target="_blank">Open APK Download Page →</a>
     </div>
   </div>
 </body>
