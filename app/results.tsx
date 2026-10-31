@@ -41,6 +41,7 @@ import {
   LifetimeSavingsData,
   LinkableProviderId,
   recordTripSavings,
+  refreshRemoteScraperConfig,
   ScrapedLiveProduct,
   setProviderLinked,
 } from '../utils/liveSessionBridge';
@@ -687,6 +688,7 @@ export default function ResultsScreen() {
   useEffect(() => {
     getLinkedProviders().then(setLinkedProviders).catch(() => {});
     getLifetimeSavings().then(setLifetimeSavings).catch(() => {});
+    refreshRemoteScraperConfig().catch(() => {});
   }, []);
 
   const activeDistanceKm =
@@ -858,6 +860,9 @@ export default function ResultsScreen() {
       dropLng: resolvedDropCoords.lng,
       dropAddress: destination.address,
       cityLabel: CITY_LABELS[city],
+      onAuthExpired: () => {
+        setProviderAuthExpired((prev) => ({ ...prev, namma_yatri: true }));
+      },
     })
       .then((products) => {
         if (products.length > 0) {

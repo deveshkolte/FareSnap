@@ -372,6 +372,39 @@ function createServer() {
       });
     }
 
+    // Remote Hot-Updatable WebView Scraper Selector Config (Phase 1)
+    if (req.method === 'GET' && url.pathname === '/scraper-config') {
+      return sendJson(res, 200, {
+        version: 2,
+        domSelectorQuery:
+          'li, [role="option"], [data-testid*="product"], [class*="ride"], div',
+        knownProductNames: [
+          'Uber Go',
+          'UberXS',
+          'Go Non AC',
+          'Premier',
+          'UberXL',
+          'Moto',
+          'Uber Auto',
+          'Auto',
+          'Bike Direct',
+          'Auto Seat Share',
+          'Auto Pet',
+          'Cab Non AC',
+          'Cab AC',
+          'Cab Premium',
+          'Ola Mini',
+          'Mini',
+          'Prime Sedan',
+          'Prime SUV',
+          'Ola Auto',
+          'Ola Bike',
+          'Bike',
+        ],
+        extraPriceKeys: ['totalFare', 'finalFare', 'upfrontFare'],
+      });
+    }
+
     // Phone QR Launcher (Expo Go Tunnel + Web + APK)
     if (req.method === 'GET' && url.pathname === '/phone') {
       let tunnelUrl =

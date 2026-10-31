@@ -110,6 +110,7 @@ export async function fetchNammaYatriLiveFares(opts: {
   dropLng: number;
   dropAddress: string;
   cityLabel: string;
+  onAuthExpired?: () => void;
 }): Promise<ScrapedLiveProduct[]> {
   const token = await getStoredNammaYatriToken();
   if (!token) return [];
@@ -160,6 +161,11 @@ export async function fetchNammaYatriLiveFares(opts: {
       body: JSON.stringify(searchBody),
     });
 
+    if (searchRes.status === 401 || searchRes.status === 403) {
+      await setStoredNammaYatriToken(null);
+      opts.onAuthExpired?.();
+      return [];
+    }
     if (!searchRes.ok) return [];
     const searchData = await searchRes.json();
     const searchId = searchData?.searchId;
@@ -177,6 +183,11 @@ export async function fetchNammaYatriLiveFares(opts: {
           },
         }
       );
+      if (res.status === 401 || res.status === 403) {
+        await setStoredNammaYatriToken(null);
+        opts.onAuthExpired?.();
+        return [];
+      }
       if (!res.ok) break;
       const resultData = await res.json();
       const estimates: any[] = resultData?.estimates || [];

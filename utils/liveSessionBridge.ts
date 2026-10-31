@@ -152,6 +152,72 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
   },
 ];
 
+export type RemoteScraperConfig = {
+  version: number;
+  domSelectorQuery: string;
+  knownProductNames: string[];
+  extraPriceKeys: string[];
+};
+
+const DEFAULT_SCRAPER_CONFIG: RemoteScraperConfig = {
+  version: 1,
+  domSelectorQuery: 'li, [role="option"], [data-testid*="product"], div',
+  knownProductNames: [
+    'Uber Go',
+    'UberXS',
+    'Go Non AC',
+    'Premier',
+    'UberXL',
+    'Moto',
+    'Uber Auto',
+    'Auto',
+    'Bike Direct',
+    'Auto Seat Share',
+    'Auto Pet',
+    'Cab Non AC',
+    'Cab AC',
+    'Cab Premium',
+    'Ola Mini',
+    'Mini',
+    'Prime Sedan',
+    'Prime SUV',
+    'Ola Auto',
+    'Ola Bike',
+    'Bike',
+  ],
+  extraPriceKeys: ['totalFare', 'finalFare', 'upfrontFare'],
+};
+
+let cachedScraperConfig: RemoteScraperConfig = DEFAULT_SCRAPER_CONFIG;
+
+export async function refreshRemoteScraperConfig(): Promise<RemoteScraperConfig> {
+  const bapUrl = (
+    process.env.EXPO_PUBLIC_ONDC_BAP_URL || 'http://localhost:4040'
+  ).replace(/\/$/, '');
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(`${bapUrl}/scraper-config`, {
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      if (
+        data &&
+        Array.isArray(data.knownProductNames) &&
+        typeof data.domSelectorQuery === 'string'
+      ) {
+        cachedScraperConfig = {
+          ...DEFAULT_SCRAPER_CONFIG,
+          ...data,
+        };
+      }
+    }
+  } catch {}
+  return cachedScraperConfig;
+}
+
 /**
  * Builds the injected JavaScript for a specific provider's WebView.
  * Intercepts both JSON API responses (`fetch` / `XMLHttpRequest`) and live DOM
@@ -354,12 +420,13 @@ export const buildProviderScraperScript = (
     return origSend.apply(this, arguments);
   };
 
-  // 4. DOM Scraper & Auth Detector (scans rendered product rows on m.uber.com / book.olacabs.com / rapido)
-  var KNOWN_PRODUCT_NAMES = [
-    'Uber Go', 'UberXS', 'Go Non AC', 'Premier', 'UberXL', 'Moto', 'Uber Auto', 'Auto',
-    'Bike Direct', 'Auto Seat Share', 'Auto Pet', 'Cab Non AC', 'Cab AC', 'Cab Premium',
-    'Ola Mini', 'Mini', 'Prime Sedan', 'Prime SUV', 'Ola Auto', 'Ola Bike', 'Bike'
-  ];
+  // 4. DOM Scraper & Auth Detector (uses hot-updatable remote scraper config)
+  var KNOWN_PRODUCT_NAMES = ${JSON.stringify(
+    cachedScraperConfig.knownProductNames
+  )};
+  var DOM_SELECTOR_QUERY = ${JSON.stringify(
+    cachedScraperConfig.domSelectorQuery
+  )};
 
   function scanDomForProductsAndAuth() {
     try {
@@ -382,7 +449,7 @@ export const buildProviderScraperScript = (
       var seenNames = {};
 
       // Scan list items / cards in DOM that contain both a vehicle name and a ₹ price
-      var candidates = document.querySelectorAll('li, [role="option"], [data-testid*="product"], div');
+      var candidates = document.querySelectorAll(DOM_SELECTOR_QUERY);
       for (var i = 0; i < candidates.length && domProducts.length < 10; i++) {
         var el = candidates[i];
         if (el.children.length > 12) continue; // skip huge container divs
