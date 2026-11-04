@@ -625,6 +625,8 @@ export const resolveDynamicCityFromCoords = async (
     return { metroKey: metro };
   }
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3500);
     const [nomRes, photonRes] = await Promise.allSettled([
       fetch(
         `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
@@ -632,12 +634,15 @@ export const resolveDynamicCityFromCoords = async (
           headers: {
             'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
           },
+          signal: ctrl.signal,
         }
-      ).then((r) => r.json()),
+      ).then((r) => (r.ok ? r.json() : null)),
       fetch(
-        `https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}&lang=en`
-      ).then((r) => r.json()),
+        `https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}&lang=en`,
+        { signal: ctrl.signal }
+      ).then((r) => (r.ok ? r.json() : null)),
     ]);
+    clearTimeout(timer);
 
     if (nomRes.status === 'fulfilled' && nomRes.value?.address) {
       const a = nomRes.value.address;
@@ -809,13 +814,13 @@ export const searchPlacesAutocomplete = async (opts: {
           },
           signal: opts.signal,
         }
-      ).then((r) => r.json()),
+      ).then((r) => (r.ok ? r.json() : null)),
       fetch(
         `https://photon.komoot.io/api/?q=${encodeURIComponent(
           clean
         )}&lat=${anchor.lat}&lon=${anchor.lng}&bbox=${photonBbox}&limit=8&lang=en`,
         { signal: opts.signal }
-      ).then((r) => r.json()),
+      ).then((r) => (r.ok ? r.json() : null)),
     ]);
 
     if (

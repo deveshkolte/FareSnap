@@ -83,18 +83,19 @@ export class QuoteEngine {
   private getSortedQuotes(): FareQuote[] {
     const allQuotes = Array.from(this.currentQuotes.values()).flat();
 
-    // Deduplicate by providerName: prefer live_provider over faresnap_estimate
-    const byProviderName = new Map<string, FareQuote>();
+    // Deduplicate by providerName + rideType: prefer live_provider over faresnap_estimate
+    const byKey = new Map<string, FareQuote>();
     for (const quote of allQuotes) {
-      const existing = byProviderName.get(quote.providerName);
+      const key = `${quote.providerName.toLowerCase()}::${quote.rideType.toLowerCase()}`;
+      const existing = byKey.get(key);
       if (!existing) {
-        byProviderName.set(quote.providerName, quote);
+        byKey.set(key, quote);
       } else if (quote.source === 'live_provider' && existing.source !== 'live_provider') {
-        byProviderName.set(quote.providerName, quote);
+        byKey.set(key, quote);
       }
     }
 
-    return Array.from(byProviderName.values()).sort((a, b) => {
+    return Array.from(byKey.values()).sort((a, b) => {
       if (a.price === null) return 1;
       if (b.price === null) return -1;
       return a.price - b.price;

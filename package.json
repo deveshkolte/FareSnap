@@ -11,7 +11,8 @@
     "backend": "node ondc-test/server.js",
     "ondc:keys": "node ondc-test/generate-keys.js",
     "build:apk": "eas build -p android --profile preview",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "node --test tests/engines.test.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

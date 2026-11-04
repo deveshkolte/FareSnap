@@ -1186,7 +1186,7 @@ export default function ResultsScreen() {
       try {
         setAiLoading(true);
         const promptBody = {
-          model: 'llama-3.1-8b-instant',
+          model: 'openai/gpt-oss-120b',
           max_tokens: 220,
           temperature: 0.3,
           messages: [

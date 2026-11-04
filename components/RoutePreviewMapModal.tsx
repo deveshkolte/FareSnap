@@ -27,6 +27,14 @@ const buildRoutePreviewHtml = (opts: {
   dest: RouteCoords;
 }) => {
   const { origin, smart, smartLabel, dest } = opts;
+  const originLat = Number.isFinite(origin?.lat) ? origin.lat : 12.9716;
+  const originLng = Number.isFinite(origin?.lng) ? origin.lng : 77.5946;
+  const destLat = Number.isFinite(dest?.lat) ? dest.lat : 12.9352;
+  const destLng = Number.isFinite(dest?.lng) ? dest.lng : 77.6245;
+  const smartCoords =
+    smart && Number.isFinite(smart.lat) && Number.isFinite(smart.lng)
+      ? `[${smart.lat}, ${smart.lng}]`
+      : 'null';
   return `
 <!DOCTYPE html>
 <html>
@@ -43,9 +51,9 @@ const buildRoutePreviewHtml = (opts: {
 <body>
   <div id="map"></div>
   <script>
-    var origin = [${origin.lat}, ${origin.lng}];
-    var dest = [${dest.lat}, ${dest.lng}];
-    var smart = ${smart ? `[${smart.lat}, ${smart.lng}]` : 'null'};
+    var origin = [${originLat}, ${originLng}];
+    var dest = [${destLat}, ${destLng}];
+    var smart = ${smartCoords};
 
     var map = L.map('map', { zoomControl: true }).setView(smart || origin, 16);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

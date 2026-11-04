@@ -209,11 +209,23 @@ export async function openRideApp(
     }
   }
 
+  const config = APP_CONFIGS[appName];
+  const baseScheme = config?.deepLink;
+
   try {
-    const canOpen = await Linking.canOpenURL(deepLink);
+    const canOpen =
+      (baseScheme && (await Linking.canOpenURL(baseScheme))) ||
+      (await Linking.canOpenURL(deepLink));
     if (canOpen) {
-      await Linking.openURL(deepLink);
-      return { handoffHasCoords, copiedAddress };
+      try {
+        await Linking.openURL(deepLink);
+        return { handoffHasCoords, copiedAddress };
+      } catch {
+        if (baseScheme) {
+          await Linking.openURL(baseScheme);
+          return { handoffHasCoords, copiedAddress };
+        }
+      }
     }
   } catch {
     // fall through to web fallback

@@ -515,6 +515,8 @@ function createServer() {
       try {
         const body = await readJsonBody(req);
         const slotId = String(body?.slotId || 'unknown');
+        monetizationStats.bySlot = monetizationStats.bySlot || {};
+        monetizationStats.recentClicks = monetizationStats.recentClicks || [];
         monetizationStats.totalClicks =
           (monetizationStats.totalClicks || 0) + 1;
         monetizationStats.bySlot[slotId] =
@@ -819,6 +821,10 @@ function createServer() {
         // Try Groq first if configured
         if (GROQ_API_KEY) {
           try {
+            const effectiveModel =
+              !body?.model || body.model.includes('llama-3.1')
+                ? 'openai/gpt-oss-120b'
+                : body.model;
             const upstream = await fetch(
               'https://api.groq.com/openai/v1/chat/completions',
               {
@@ -827,7 +833,10 @@ function createServer() {
                   'Content-Type': 'application/json',
                   Authorization: `Bearer ${GROQ_API_KEY}`,
                 },
-                body: JSON.stringify(body),
+                body: JSON.stringify({
+                  ...body,
+                  model: effectiveModel,
+                }),
               }
             );
             if (upstream.ok) {
@@ -842,25 +851,29 @@ function createServer() {
           const promptText =
             body?.messages?.[0]?.content ||
             'Analyze Indian ride-hailing fares and return JSON.';
-          const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(
-              GEMINI_API_KEY
-            )}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }] }],
-              }),
-            }
-          );
-          if (geminiRes.ok) {
-            const geminiData = await geminiRes.json();
-            const text =
-              geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            return sendJson(res, 200, {
-              choices: [{ message: { content: text } }],
-            });
+          for (const gModel of ['gemini-3.8-flash', 'gemini-flash-latest']) {
+            try {
+              const geminiRes = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${encodeURIComponent(
+                  GEMINI_API_KEY
+                )}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    contents: [{ parts: [{ text: promptText }] }],
+                  }),
+                }
+              );
+              if (geminiRes.ok) {
+                const geminiData = await geminiRes.json();
+                const text =
+                  geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                return sendJson(res, 200, {
+                  choices: [{ message: { content: text } }],
+                });
+              }
+            } catch {}
           }
         }
 

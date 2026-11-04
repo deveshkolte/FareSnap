@@ -78,6 +78,7 @@ const probeOsrmRoute = async (
     const url = `https://router.project-osrm.org/route/v1/driving/${candidate.lng},${candidate.lat};${dest.lng},${dest.lat}?overview=false&steps=true`;
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
+    if (!res.ok) return null;
     const data = await res.json();
     if (data.code === 'Ok' && data.routes?.length > 0) {
       const r = data.routes[0];
@@ -223,10 +224,12 @@ export const computeSmartPickup = async (opts: {
         { signal: controller.signal }
       );
       clearTimeout(timeout);
-      const data = await res.json();
-      const props = data?.features?.[0]?.properties;
-      if (props) {
-        streetName = [props.street, props.name].filter(Boolean)[0] || '';
+      if (res.ok) {
+        const data = await res.json();
+        const props = data?.features?.[0]?.properties;
+        if (props) {
+          streetName = [props.street, props.name].filter(Boolean)[0] || '';
+        }
       }
     } catch {}
   }

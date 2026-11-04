@@ -88,18 +88,24 @@ export class OndcBecknProvider implements AsyncRideProvider {
         // Poll for `/on_search` webhook completion (up to 3 attempts over ~1.5s)
         for (const waitMs of [420, 500, 600]) {
           await new Promise((r) => setTimeout(r, waitMs));
-          const pollRes = await fetch(
-            `${this.bapUrl}/ondc/quotes/${encodeURIComponent(transactionId)}`
-          );
-          if (!pollRes.ok) break;
-          const pollData = await pollRes.json();
-          if (
-            pollData.status === 'completed' ||
-            (Array.isArray(pollData.quotes) && pollData.quotes.length > 0)
-          ) {
-            this.callback?.(reqId, pollData.quotes || []);
-            return;
-          }
+          try {
+            const pollCtrl = new AbortController();
+            const pollTimer = setTimeout(() => pollCtrl.abort(), 2000);
+            const pollRes = await fetch(
+              `${this.bapUrl}/ondc/quotes/${encodeURIComponent(transactionId)}`,
+              { signal: pollCtrl.signal }
+            );
+            clearTimeout(pollTimer);
+            if (!pollRes.ok) break;
+            const pollData = await pollRes.json();
+            if (
+              pollData.status === 'completed' ||
+              (Array.isArray(pollData.quotes) && pollData.quotes.length > 0)
+            ) {
+              this.callback?.(reqId, pollData.quotes || []);
+              return;
+            }
+          } catch {}
         }
 
         this.callback?.(reqId, []);

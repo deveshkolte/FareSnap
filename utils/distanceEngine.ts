@@ -284,6 +284,7 @@ export const getRoadDistance = async (
         fetch(osrmUrl, { signal: controller.signal }),
       ]);
       clearTimeout(timeout);
+      if (!routeRes.ok) throw new Error(`OSRM status ${routeRes.status}`);
       const routeData = await routeRes.json();
 
       if (routeData.code === 'Ok' && routeData.routes?.length > 0) {

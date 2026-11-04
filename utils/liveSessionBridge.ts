@@ -604,8 +604,14 @@ export const buildProviderScraperScript = (
               }
             });
 
-            // Poll comp.filteredServices for decoded Rapido quotes
+            // Poll comp.filteredServices for decoded Rapido quotes (max 15 attempts / ~13.5s)
+            var checkAttempts = 0;
             var checkServices = setInterval(function() {
+              checkAttempts++;
+              if (checkAttempts > 15) {
+                clearInterval(checkServices);
+                return;
+              }
               try {
                 var list = comp.filteredServices || comp.services || [];
                 var extracted = [];

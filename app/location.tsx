@@ -505,15 +505,21 @@ export default function LocationScreen() {
 
       if (!addressString) {
         try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 3500);
           const res = await fetch(
-            `https://photon.komoot.io/reverse?lon=${longitude}&lat=${latitude}&lang=en`
+            `https://photon.komoot.io/reverse?lon=${longitude}&lat=${latitude}&lang=en`,
+            { signal: ctrl.signal }
           );
-          const data = await res.json();
-          const p = data?.features?.[0]?.properties;
-          if (p) {
-            addressString = [p.name, p.street, p.city, p.state]
-              .filter(Boolean)
-              .join(', ');
+          clearTimeout(timer);
+          if (res.ok) {
+            const data = await res.json();
+            const p = data?.features?.[0]?.properties;
+            if (p) {
+              addressString = [p.name, p.street, p.city, p.state]
+                .filter(Boolean)
+                .join(', ');
+            }
           }
         } catch {}
       }

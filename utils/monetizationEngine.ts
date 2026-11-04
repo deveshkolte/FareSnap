@@ -45,6 +45,7 @@ const DEFAULT_MONETIZATION_CONFIG: RemoteMonetizationConfig = {
     'https://super.money/?utm_source=faresnap_upi',
   postRidePerkTitle: '💳 Earn 5% back on this ride with Super UPI / Cashback →',
   postRidePerkUrl:
+    process.env.EXPO_PUBLIC_POST_RIDE_PERK_URL ||
     process.env.EXPO_PUBLIC_CASHBACK_OFFER_URL ||
     'https://super.money/?utm_source=faresnap_postride',
 };

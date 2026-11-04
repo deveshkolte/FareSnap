@@ -10,7 +10,22 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.deveshkolte.faresnap"
+      "bundleIdentifier": "com.deveshkolte.faresnap",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "uber",
+          "olacabs",
+          "in.rapido.passenger",
+          "yatri",
+          "blusmart",
+          "merucabs",
+          "meru",
+          "indrive",
+          "bharatcab",
+          "savaari",
+          "upi"
+        ]
+      }
     },
     "android": {
       "versionCode": 3,
@@ -55,6 +70,12 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow FareSnap to access your location to calculate ride fares."
         }
       ],
       "expo-asset",

@@ -19,7 +19,10 @@ type Props = {
   onConfirm: (coords: { lat: number; lng: number; address: string }) => void;
 };
 
-const buildLeafletHtml = (lat: number, lng: number) => `
+const buildLeafletHtml = (lat: number, lng: number) => {
+  const safeLat = Number.isFinite(lat) ? lat : 12.9716;
+  const safeLng = Number.isFinite(lng) ? lng : 77.5946;
+  return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -35,8 +38,8 @@ const buildLeafletHtml = (lat: number, lng: number) => `
 <body>
   <div id="map"></div>
   <script>
-    var lat = ${lat};
-    var lng = ${lng};
+    var lat = ${safeLat};
+    var lng = ${safeLng};
     var map = L.map('map', { zoomControl: true }).setView([lat, lng], 17);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
@@ -76,6 +79,7 @@ const buildLeafletHtml = (lat: number, lng: number) => `
 </body>
 </html>
 `;
+};
 
 export function ConfirmPickupMapModal({
   visible,
@@ -102,17 +106,23 @@ export function ConfirmPickupMapModal({
     setCoords({ lat: roundedLat, lng: roundedLng });
     setReverseLoading(true);
     try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3200);
       const res = await fetch(
-        `https://photon.komoot.io/reverse?lon=${roundedLng}&lat=${roundedLat}&lang=en`
+        `https://photon.komoot.io/reverse?lon=${roundedLng}&lat=${roundedLat}&lang=en`,
+        { signal: ctrl.signal }
       );
-      const data = await res.json();
-      const p = data?.features?.[0]?.properties;
-      if (p) {
-        const formatted = [p.name, p.street, p.district, p.city, p.state]
-          .filter(Boolean)
-          .join(', ');
-        if (formatted) {
-          setAddress(formatted);
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        const p = data?.features?.[0]?.properties;
+        if (p) {
+          const formatted = [p.name, p.street, p.district, p.city, p.state]
+            .filter(Boolean)
+            .join(', ');
+          if (formatted) {
+            setAddress(formatted);
+          }
         }
       }
     } catch {

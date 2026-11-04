@@ -123,19 +123,25 @@ export const resolveMapsLinkOrCoords = async (
   if (typeof lat === 'number' && typeof lng === 'number') {
     let address = placeHint || '';
     try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3500);
       const res = await fetch(
-        `https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}&lang=en`
+        `https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}&lang=en`,
+        { signal: ctrl.signal }
       );
-      const data = await res.json();
-      const p = data?.features?.[0]?.properties;
-      if (p) {
-        const rev = [p.name, p.street, p.city, p.state]
-          .filter(Boolean)
-          .join(', ');
-        if (rev) {
-          address = placeHint && !rev.toLowerCase().includes(placeHint.toLowerCase())
-            ? `${placeHint}, ${rev}`
-            : rev;
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        const p = data?.features?.[0]?.properties;
+        if (p) {
+          const rev = [p.name, p.street, p.city, p.state]
+            .filter(Boolean)
+            .join(', ');
+          if (rev) {
+            address = placeHint && !rev.toLowerCase().includes(placeHint.toLowerCase())
+              ? `${placeHint}, ${rev}`
+              : rev;
+          }
         }
       }
     } catch {}
@@ -149,23 +155,29 @@ export const resolveMapsLinkOrCoords = async (
 
   if (placeHint) {
     try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3500);
       const res = await fetch(
         `https://photon.komoot.io/api/?q=${encodeURIComponent(
           placeHint + ' India'
-        )}&bbox=68.1,6.5,97.4,35.7&limit=1&lang=en`
+        )}&bbox=68.1,6.5,97.4,35.7&limit=1&lang=en`,
+        { signal: ctrl.signal }
       );
-      const data = await res.json();
-      const f = data?.features?.[0];
-      if (f) {
-        const p = f.properties || {};
-        const full = [p.name, p.street, p.city, p.state]
-          .filter(Boolean)
-          .join(', ');
-        return {
-          lat: f.geometry.coordinates[1],
-          lng: f.geometry.coordinates[0],
-          address: full || placeHint,
-        };
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        const f = data?.features?.[0];
+        if (f) {
+          const p = f.properties || {};
+          const full = [p.name, p.street, p.city, p.state]
+            .filter(Boolean)
+            .join(', ');
+          return {
+            lat: f.geometry.coordinates[1],
+            lng: f.geometry.coordinates[0],
+            address: full || placeHint,
+          };
+        }
       }
     } catch {}
   }
