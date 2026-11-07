@@ -109,10 +109,7 @@ const APP_CONFIGS: Record<string, AppConfig> = {
     deepLink: 'yatri://open',
     webUrl: 'https://nammayatri.in/',
   },
-  BluSmart: {
-    deepLink: 'blusmart://open',
-    webUrl: 'https://blu-smart.com/',
-  },
+
   inDrive: {
     deepLink: 'indrive://open',
     webUrl: 'https://indrive.com/en/home/',

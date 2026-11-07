@@ -632,7 +632,7 @@ export const resolveDynamicCityFromCoords = async (
         `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
         {
           headers: {
-            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
+            'User-Agent': 'FareSnap/1.0 (https://github.com/YOUR_GITHUB_USERNAME/FareSnap)',
           },
           signal: ctrl.signal,
         }
@@ -810,7 +810,7 @@ export const searchPlacesAutocomplete = async (opts: {
         )}&countrycodes=in&viewbox=${nomViewbox}&bounded=1&format=json&addressdetails=1&limit=6`,
         {
           headers: {
-            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
+            'User-Agent': 'FareSnap/1.0 (https://github.com/YOUR_GITHUB_USERNAME/FareSnap)',
           },
           signal: opts.signal,
         }

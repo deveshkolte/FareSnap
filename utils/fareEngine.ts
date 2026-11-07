@@ -113,8 +113,7 @@ export const getConfigKey = (appName: string): string | null => {
       return 'InDriveAuto';
     case 'inDrive Sedan':
       return 'InDriveSedan';
-    case 'BluSmart':
-      return 'BluSmart';
+
     case 'Meru Cabs':
     case 'Meru':
       return 'Meru';
@@ -470,12 +469,7 @@ export const FARE_CONFIG: Record<string, AppCityConfig> = {
     default: { baseFare: 102, perKm: 29.0, perMin: 3.7, minFare: 205 },
     surge: { peak: 1.15, normal: 1.0, offPeak: 0.95 },
   },
-  BluSmart: {
-    bangalore: { baseFare: 50, perKm: 13, perMin: 1.5, minFare: 90 },
-    delhi: { baseFare: 55, perKm: 14, perMin: 1.5, minFare: 95 },
-    hyderabad: { baseFare: 50, perKm: 13, perMin: 1.5, minFare: 90 },
-    surge: { peak: 1.1, normal: 1.0, offPeak: 1.0 },
-  },
+
   GenericCab: {
     bangalore: { baseFare: 50, perKm: 15, perMin: 1.6, minFare: 95 },
     mumbai: { baseFare: 56, perKm: 16.5, perMin: 1.8, minFare: 105 },
@@ -501,10 +495,6 @@ export const estimateFare = (
   const configKey = getConfigKey(appName);
   if (!configKey) {
     return { available: false, reason: 'Not available in your city' };
-  }
-
-  if (configKey === 'BluSmart') {
-    return { available: false, reason: 'Service currently suspended' };
   }
 
   const appConfig = FARE_CONFIG[configKey];

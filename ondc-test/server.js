@@ -545,7 +545,7 @@ function createServer() {
     if (req.method === 'GET' && url.pathname === '/phone') {
       let tunnelUrl =
         process.env.EXPO_TUNNEL_URL ||
-        'exp://3gde_ay-deveshkolte-8090.exp.direct';
+        'exp://localhost:8090';
       try {
         const mfRes = await fetch('http://localhost:8090', {
           headers: { 'expo-platform': 'android' },
@@ -559,10 +559,10 @@ function createServer() {
         }
       } catch {}
 
-      const lanUrl = process.env.PHONE_WEB_URL || 'http://192.168.254.93:8090';
+      const lanUrl = process.env.PHONE_WEB_URL || 'http://YOUR_LOCAL_IP:8090';
       const apkBuildUrl =
         process.env.EAS_APK_BUILD_URL ||
-        'https://expo.dev/accounts/devesh.kolte/projects/faresnap/builds/62c4ec4f-a7f4-44ea-b269-b85dd2c32688';
+        'https://expo.dev/accounts/YOUR_EXPO_ACCOUNT/projects/faresnap/builds/YOUR_BUILD_ID';
       const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -590,7 +590,7 @@ function createServer() {
 </head>
 <body>
   <h1>🚀 Open FareSnap in Expo Go on Your Phone</h1>
-  <p class="sub">Your Wi-Fi network (<code>192.168.254.93</code>) blocks direct LAN connections between devices. I started an <b>Expo Cloud Tunnel</b> so your phone connects from <b>any Wi-Fi or 5G network</b>!</p>
+  <p class="sub">Use the Expo Cloud Tunnel to open FareSnap on your phone from <b>any Wi-Fi or 5G network</b>!</p>
   <div class="grid">
     <div class="card card-featured">
       <span class="badge badge-green">WORKS ON ANY WIFI OR 5G · EXPO GO</span>

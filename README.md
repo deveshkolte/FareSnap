@@ -6,9 +6,7 @@
 
 [![React Native](https://img.shields.io/badge/Expo_SDK_58-React_Native_0.88-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Cloud Backend](https://img.shields.io/badge/Render_Cloud-ONDC_BAP_%26_AI_Proxy-4338ca?style=flat-square)](https://faresnap-ondc-bap-gateway.onrender.com/health)
 [![ONDC Beckn](https://img.shields.io/badge/Protocol-ONDC:TRV10_v2.0-10b981?style=flat-square)](#system-architecture--core-engines)
-[![Download APK](https://img.shields.io/badge/Android_APK-Latest_Release-2563eb?style=flat-square&logo=android)](https://github.com/deveshkolte/FareSnap/releases/latest)
 
 </div>
 
@@ -16,7 +14,7 @@
 
 ## Overview
 
-**FareSnap** is a Pan-India mobility comparison and booking engine built with **Expo SDK 58 & React Native** that compares real-time and calibrated fares across **9 ride-hailing providers** (**Uber, Ola, Rapido, Namma Yatri, InDrive, Bharat Cab, Meru, Savaari, and BluSmart**) and **20+ vehicle tiers** (`Bike`, `Auto`, `Cab`), alongside **Multi-Modal Metro + Auto/Bike split-route combinations**.
+**FareSnap** is a Pan-India mobility comparison and booking engine built with **Expo SDK 58 & React Native** that compares real-time and calibrated fares across **8 ride-hailing providers** (**Uber, Ola, Rapido, Namma Yatri, InDrive, Bharat Cab, Meru, and Savaari**) and **20+ vehicle tiers** (`Bike`, `Auto`, `Cab`), alongside **Multi-Modal Metro + Auto/Bike split-route combinations**.
 
 Unlike static fare calculators, FareSnap combines:
 - **Live Provider & ONDC Bridges:** Direct **Namma Yatri (`api.moving.tech`)** OTP authentication, `/rideSearch` live quotes, and `/estimate/{id}/select2` in-app booking; **Rapido (`m.rapido.bike`)** `window.unupFe` PWA fare extraction; **ONDC Beckn (`ONDC:TRV10`)** BAP gateway (`ondc-test/server.js`); and hot-updatable **WebView `fetch`/`XHR`/DOM session scraping** for linked **Uber** and **Ola** accounts.
@@ -68,7 +66,7 @@ Unlike static fare calculators, FareSnap combines:
 4. **60-Minute Rain-Radar Surge Forecaster & Self-Learning Calibration (`utils/weatherSurgeEngine.ts`, `utils/fareCalibration.ts`, `utils/fareReporter.ts`)**:
    - Queries Open-Meteo's `minutely_15` precipitation radar at the pickup coordinates, pools live and user-reported fares into the cloud surge pool (`/fare-reports` + Supabase RLS), and updates an exponentially weighted moving average (EWMA) calibration multiplier per city and provider.
 5. **ONDC `ONDC:TRV10` BAP Gateway & Dual-LLM Proxy (`ondc-test/server.js`, `ondc-test/generate-keys.js`)**:
-   - Zero-dependency Node.js server deployed on Render (`https://faresnap-ondc-bap-gateway.onrender.com`) implementing Beckn `ONDC:TRV10` `/search` & `/on_search` with `BLAKE-512` + `Ed25519` signing, `/fare-reports` persistence, `/scraper-config` hot updates, and a server-side Groq (`llama-3.1-8b-instant`) + Google Gemini (`gemini-2.0-flash`) fallback proxy.
+   - Zero-dependency Node.js server implementing Beckn `ONDC:TRV10` `/search` & `/on_search` with `BLAKE-512` + `Ed25519` signing, `/fare-reports` persistence, `/scraper-config` hot updates, and a server-side Groq + Google Gemini fallback proxy.
 
 ---
 
@@ -79,26 +77,29 @@ Unlike static fare calculators, FareSnap combines:
 | **Mobile & Web Framework** | React Native `0.88`, Expo SDK `58`, Expo Router, TypeScript `5.9` |
 | **Autocomplete & Routing** | OSRM (`steps=true`), Ola Maps API, Bounded Nominatim, Komoot Photon, Leaflet + OpenStreetMap |
 | **Live Ride Bridges** | Namma Yatri REST API (`api.moving.tech`), Rapido PWA `unupFe` Bridge, `react-native-webview` Hook Pool |
-| **Cloud Backend & Protocol** | Node.js ONDC `ONDC:TRV10` BAP Gateway (Render), Supabase PostgreSQL + RLS (`supabase/schema.sql`) |
-| **Weather & AI Insights** | Open-Meteo 15-Minute Radar API, Groq (`llama-3.1-8b-instant`) + Gemini (`gemini-2.0-flash`) Proxy |
+| **Cloud Backend & Protocol** | Node.js ONDC `ONDC:TRV10` BAP Gateway, Supabase PostgreSQL + RLS (`supabase/schema.sql`) |
+| **Weather & AI Insights** | Open-Meteo 15-Minute Radar API, Groq + Gemini Dual-LLM Proxy |
 
 ---
 
 ## Quick Start
 
+> **For detailed setup instructions, see [SETUP.md](./SETUP.md).**
+
 ```bash
-git clone https://github.com/deveshkolte/FareSnap.git
+git clone https://github.com/YOUR_GITHUB_USERNAME/FareSnap.git
 cd FareSnap
 npm install
 
-# Copy example environment configuration
+# Configure your environment
 cp .env.example .env
+# Edit .env and fill in your API keys (see SETUP.md for details)
 
-# Start the local ONDC BAP, Surge Pool & AI Proxy server (or use the default Render cloud URL)
+# Start the backend (AI proxy + ONDC gateway + surge pool)
 npm run backend
 
-# Launch Expo with Cloud Tunnel for Expo Go (SDK 58) or Web
-npm run tunnel
+# Start the Expo app
+npx expo start
 ```
 
 ---
@@ -125,6 +126,8 @@ FareSnap/
 │   └── generate-keys.js               # Ed25519 + X25519 keypair generator for ONDC registration
 ├── supabase/
 │   └── schema.sql                     # Production PostgreSQL table, indexes & RLS policies
+├── .env.example                       # Environment variable template (copy to .env)
+├── SETUP.md                           # Developer handover & quick-start guide
 └── utils/
     ├── placeAutocompleteEngine.ts     # City-locked & pickup-anchored Pan-India autocomplete engine
     ├── nammaYatriDirectApi.ts         # Production Namma Yatri OTP auth, rideSearch & select2 booking client
@@ -145,4 +148,4 @@ FareSnap/
 
 ## License
 
-MIT License — Created by **[Devesh Kolte](https://github.com/deveshkolte)**.
+MIT License

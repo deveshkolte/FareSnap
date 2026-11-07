@@ -107,12 +107,7 @@ export class FareSnapEstimateProvider implements SyncRideProvider {
         { category: 'SUV', label: 'Savaari Innova SUV', engineKey: 'SavaariSUV' },
       ],
     },
-    {
-      providerName: 'BluSmart',
-      defaultRideType: 'Electric',
-      defaultEngineKey: 'BluSmart',
-      tiers: [{ category: 'Cab', label: 'BluSmart Electric', engineKey: 'BluSmart' }],
-    },
+
   ];
 
   async getConnectionStatus(): Promise<ProviderConnection> {

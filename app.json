@@ -10,14 +10,13 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.deveshkolte.faresnap",
+      "bundleIdentifier": "com.faresnap.app",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "uber",
           "olacabs",
           "in.rapido.passenger",
           "yatri",
-          "blusmart",
           "merucabs",
           "meru",
           "indrive",
@@ -42,7 +41,6 @@
         "olacabs://",
         "in.rapido.passenger://",
         "yatri://",
-        "blusmart://",
         "merucabs://",
         "meru://",
         "indrive://",
@@ -51,7 +49,7 @@
         "porter://",
         "jugnoo://"
       ],
-      "package": "com.deveshkolte.faresnap"
+      "package": "com.faresnap.app"
     },
     "androidStatusBar": {
       "backgroundColor": "#ffffff",

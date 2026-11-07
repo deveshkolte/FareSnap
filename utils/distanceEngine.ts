@@ -183,7 +183,7 @@ export const getRoadDistance = async (
         )}&countrycodes=in${viewboxParam}&format=json&limit=1`;
         const res = await fetch(nomUrl, {
           headers: {
-            'User-Agent': 'FareSnap/1.0 (https://github.com/deveshkolte/FareSnap)',
+            'User-Agent': 'FareSnap/1.0 (https://github.com/YOUR_GITHUB_USERNAME/FareSnap)',
           },
           signal: controller.signal,
         });
