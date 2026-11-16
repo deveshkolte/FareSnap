@@ -234,7 +234,7 @@ export const computeSmartPickup = async (opts: {
     } catch {}
   }
 
-  const baseShort = originAddress.split(',')[0].trim();
+  const baseShort = (originAddress || '').split(',')[0]?.trim() || 'Current Location';
   const pickupLabel =
     streetName && streetName.toLowerCase() !== baseShort.toLowerCase()
       ? `${streetName} (${walkMeters}m walk)`
