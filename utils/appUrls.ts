@@ -68,7 +68,7 @@ const APP_CONFIGS: Record<string, AppConfig> = {
       if (opts.dropAddress) {
         params.set('dropoff[formatted_address]', opts.dropAddress);
       }
-      return `https://m.uber.com/looking?${params.toString()}`;
+      return `https://m.uber.com/?${params.toString()}`;
     },
   },
   Ola: {

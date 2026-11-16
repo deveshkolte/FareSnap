@@ -261,3 +261,4 @@ Expected output:
 ## Support
 
 Questions about the codebase? Check the inline JSDoc comments in each `utils/` file — they document every engine's data flow and API contracts.
+

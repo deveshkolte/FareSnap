@@ -26,6 +26,7 @@ export type EstimateContext = {
   weatherMultiplier?: number;
   pickupAddress?: string;
   isSmartPickup?: boolean;
+  surgeType?: 'peak' | 'normal' | 'offPeak';
 };
 
 export type FareEstimate =
@@ -74,6 +75,7 @@ export const getConfigKey = (appName: string): string | null => {
   }
   switch (appName) {
     case 'Uber':
+    case 'Uber Go':
       return 'UberGo';
     case 'UberXS':
       return 'UberXS';
@@ -88,6 +90,7 @@ export const getConfigKey = (appName: string): string | null => {
     case 'Uber XL':
       return 'UberXL';
     case 'Ola':
+    case 'Ola Mini':
       return 'OlaMini';
     case 'Ola Bike':
       return 'OlaBike';
@@ -98,12 +101,14 @@ export const getConfigKey = (appName: string): string | null => {
     case 'Ola Prime SUV':
       return 'OlaPrimeSUV';
     case 'Rapido':
+    case 'Rapido Bike':
       return 'RapidoBike';
     case 'Rapido Auto':
       return 'RapidoAuto';
     case 'Rapido Cab':
       return 'RapidoCab';
     case 'Namma Yatri':
+    case 'Namma Yatri Auto':
       return 'NammaYatriAuto';
     case 'Namma Yatri Cab':
       return 'NammaYatriCab';
@@ -507,7 +512,7 @@ export const estimateFare = (
     return { available: false, reason: 'Not available in your city' };
   }
 
-  const surgeType = getSurgeType();
+  const surgeType = context?.surgeType ?? getSurgeType();
   const baseSurge = appConfig.surge[surgeType];
   const allowsSurge = appConfig.surge.peak > 1.0;
   const weatherMult =

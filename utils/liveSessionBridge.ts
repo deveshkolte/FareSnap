@@ -78,7 +78,7 @@ export const LINKABLE_PROVIDERS: LinkableProviderInfo[] = [
     shortTag: 'Uber',
     brandColor: '#000000',
     textColor: '#ffffff',
-    loginUrl: 'https://m.uber.com/looking',
+    loginUrl: 'https://m.uber.com',
     buildRouteWebUrl: ({
       pickupLat,
       pickupLng,
