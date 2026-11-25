@@ -1,4 +1,4 @@
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -32,13 +32,13 @@ const PROVIDER_METAS: Record<
   uber: {
     tagline: 'Uber Go, Auto, Moto, Premier & XL',
     features: ['Real surge pricing from your account', 'Direct 1-tap in-app booking session'],
-    badgeBg: '#000000',
+    badgeBg: '#0f172a',
     badgeText: 'Uber',
     badgeColor: '#ffffff',
   },
   ola: {
     tagline: 'Ola Mini, Prime, Auto & Bike',
-    features: ['Live surge multiplier verification', 'Web session bridge for quick booking'],
+    features: ['Live surge multiplier verification', 'Web session bridge for fast booking'],
     badgeBg: '#16a34a',
     badgeText: 'OLA',
     badgeColor: '#ffffff',
@@ -52,9 +52,9 @@ const PROVIDER_METAS: Record<
   },
   namma_yatri: {
     tagline: 'Zero-Commission Driver Direct API & ONDC',
-    features: ['100% fare goes to driver (no surge cut)', 'Direct OTP link via Moving Tech API'],
+    features: ['100% fare goes to driver (zero surge cut)', 'Direct OTP link via Moving Tech API'],
     badgeBg: '#f59e0b',
-    badgeText: 'NY / ONDC',
+    badgeText: 'NY · ONDC',
     badgeColor: '#0f172a',
   },
 };
@@ -62,6 +62,7 @@ const PROVIDER_METAS: Record<
 export default function PluginsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { from } = useLocalSearchParams<{ from?: string }>();
 
   const [linkedMap, setLinkedMap] = useState<Record<LinkableProviderId, boolean>>({
     uber: false,
@@ -86,6 +87,7 @@ export default function PluginsScreen() {
   }, [loadLinkedStatus]);
 
   const linkedCount = Object.values(linkedMap).filter(Boolean).length;
+  const progressPercent = Math.round((linkedCount / 4) * 100);
 
   const handleConnectPress = (id: LinkableProviderId) => {
     setActiveModalProvider(id);
@@ -95,7 +97,7 @@ export default function PluginsScreen() {
   const handleDisconnectPress = (id: LinkableProviderId, name: string) => {
     Alert.alert(
       `Disconnect ${name}?`,
-      'Your saved session will be removed from this device. You will still get estimated fares.',
+      'Your saved session will be removed from this device. You will still get live estimated fares via our fallback engine.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -111,11 +113,19 @@ export default function PluginsScreen() {
   };
 
   const handleContinue = () => {
-    router.push('/location');
+    if (from === 'location' && router.canGoBack()) {
+      router.back();
+    } else {
+      router.push('/location');
+    }
   };
 
   const handleSkip = () => {
-    router.push('/location');
+    if (from === 'location' && router.canGoBack()) {
+      router.back();
+    } else {
+      router.push('/location');
+    }
   };
 
   return (
@@ -123,12 +133,17 @@ export default function PluginsScreen() {
       <Stack.Screen
         options={{
           title: 'Connect Ride Plugins',
-          headerStyle: { backgroundColor: '#000000' },
-          headerTintColor: '#ffffff',
-          headerTitleStyle: { color: '#ffffff', fontWeight: '700' },
+          headerStyle: { backgroundColor: '#ffffff' },
+          headerTintColor: '#0f172a',
+          headerTitleStyle: { color: '#0f172a', fontWeight: '700', fontSize: 17 },
           headerShadowVisible: false,
           headerRight: () => (
-            <TouchableOpacity onPress={handleSkip} style={styles.headerSkipBtn}>
+            <TouchableOpacity
+              onPress={handleSkip}
+              style={styles.headerSkipBtn}
+              activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <Text style={styles.headerSkipText}>Skip →</Text>
             </TouchableOpacity>
           ),
@@ -136,7 +151,7 @@ export default function PluginsScreen() {
       />
 
       <View style={styles.container}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="dark-content" />
 
         <ScrollView
           style={styles.scrollArea}
@@ -146,7 +161,7 @@ export default function PluginsScreen() {
           ]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Header Hero Banner */}
+          {/* Hero Banner matching App Theme */}
           <View style={styles.heroBanner}>
             <View style={styles.heroBadgeRow}>
               <View style={styles.heroIconCircle}>
@@ -155,12 +170,12 @@ export default function PluginsScreen() {
               <View style={styles.heroTextCol}>
                 <Text style={styles.heroTitle}>Unlock Real-Time Booking</Text>
                 <Text style={styles.heroSubtitle}>
-                  Log in once to fetch exact personal surge prices and enable 1-tap booking.
+                  Log in once to fetch exact personal surge prices & enable 1-tap booking.
                 </Text>
               </View>
             </View>
 
-            {/* Connection Tracker Progress */}
+            {/* Connection Tracker Progress Bar */}
             <View style={styles.progressContainer}>
               <View style={styles.progressLabelRow}>
                 <Text style={styles.progressLabel}>
@@ -168,34 +183,41 @@ export default function PluginsScreen() {
                     ? 'No plugins connected yet'
                     : `${linkedCount} of 4 ride plugins connected`}
                 </Text>
-                <Text style={styles.progressPercent}>{Math.round((linkedCount / 4) * 100)}%</Text>
+                <Text style={styles.progressPercent}>{progressPercent}%</Text>
               </View>
               <View style={styles.progressTrack}>
                 <View
                   style={[
                     styles.progressFill,
-                    { width: `${Math.max(8, (linkedCount / 4) * 100)}%` },
+                    {
+                      width: `${Math.max(6, progressPercent)}%`,
+                      backgroundColor: linkedCount > 0 ? '#16a34a' : '#2563eb',
+                    },
                   ]}
                 />
               </View>
             </View>
           </View>
 
-          {/* Fallback Approach Banner (Answers user requirement directly) */}
+          {/* Fallback Approach Banner (Matches Commute Guard & Info styling in index.tsx) */}
           <View style={styles.fallbackNoticeBox}>
-            <Text style={styles.fallbackNoticeTitle}>
-              ⚡ Skip anytime — our Fallback Engine has your back
-            </Text>
+            <View style={styles.fallbackHeaderRow}>
+              <Text style={styles.fallbackBoltIcon}>⚡</Text>
+              <Text style={styles.fallbackNoticeTitle}>
+                Skip anytime — Smart Fallback Active
+              </Text>
+            </View>
             <Text style={styles.fallbackNoticeText}>
               Don&apos;t have an account or don&apos;t want to log in? No problem. If you skip,
               FareSnap automatically runs our live ONDC network gateway, AI calibrated city fares,
-              and direct app deep-links. You will still see and compare fares across all providers.
+              and direct native app deep-links. You still get full price comparison without connecting.
             </Text>
           </View>
 
-          {/* Plugin Cards List */}
+          {/* Section Header */}
           <Text style={styles.sectionHeader}>Available Ride Plugins</Text>
 
+          {/* Provider Cards */}
           {LINKABLE_PROVIDERS.map((provider) => {
             const isLinked = Boolean(linkedMap[provider.id]);
             const meta = PROVIDER_METAS[provider.id];
@@ -220,7 +242,7 @@ export default function PluginsScreen() {
                       onPress={() => handleDisconnectPress(provider.id, provider.name)}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.connectedPillText}>🟢 Connected ✓</Text>
+                      <Text style={styles.connectedPillText}>Connected ✓</Text>
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
@@ -245,10 +267,14 @@ export default function PluginsScreen() {
 
                 {isLinked && (
                   <View style={styles.linkedFooterRow}>
-                    <Text style={styles.sessionActiveText}>Session active on device</Text>
+                    <View style={styles.activeDotRow}>
+                      <View style={styles.greenDot} />
+                      <Text style={styles.sessionActiveText}>Session active on this device</Text>
+                    </View>
                     <TouchableOpacity
                       onPress={() => handleDisconnectPress(provider.id, provider.name)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      activeOpacity={0.7}
                     >
                       <Text style={styles.disconnectLinkText}>Disconnect</Text>
                     </TouchableOpacity>
@@ -265,7 +291,7 @@ export default function PluginsScreen() {
               <Text style={styles.privacyShieldTitle}>100% On-Device Privacy Guarantee</Text>
               <Text style={styles.privacyShieldText}>
                 Your login sessions, cookies, and OTP tokens stay strictly inside your phone&apos;s
-                local encrypted storage. FareSnap never transmits your credentials to any external
+                local encrypted storage. FareSnap never transmits credentials to any external
                 cloud server.
               </Text>
             </View>
@@ -306,7 +332,6 @@ export default function PluginsScreen() {
         </View>
       </View>
 
-      {/* Embedded in-app WebView OTP Session Bridge Modal */}
       <LinkAppsModal
         visible={linkModalVisible}
         linkedMap={linkedMap}
@@ -328,7 +353,7 @@ export default function PluginsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
   },
   headerSkipBtn: {
     paddingHorizontal: 12,
@@ -336,24 +361,29 @@ const styles = StyleSheet.create({
   },
   headerSkipText: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#38bdf8',
+    fontWeight: '700',
+    color: '#2563eb',
   },
   scrollArea: {
     flex: 1,
   },
   scrollContent: {
-    padding: 18,
+    padding: 16,
   },
 
-  // Hero Banner
+  // Hero Banner (Clean white card with subtle blue badge)
   heroBanner: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 20,
     padding: 18,
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   heroBadgeRow: {
     flexDirection: 'row',
@@ -365,11 +395,11 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#eff6ff',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: '#bfdbfe',
   },
   heroIconText: {
     fontSize: 24,
@@ -379,91 +409,104 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#ffffff',
+    fontWeight: '800',
+    color: '#0f172a',
   },
   heroSubtitle: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: '#64748b',
     marginTop: 3,
     lineHeight: 18,
   },
 
   // Progress Bar
   progressContainer: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
   },
   progressLabelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
   },
   progressLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#cbd5e1',
+    color: '#475569',
   },
   progressPercent: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#38bdf8',
+    color: '#2563eb',
   },
   progressTrack: {
     height: 6,
-    backgroundColor: '#334155',
+    backgroundColor: '#e2e8f0',
     borderRadius: 3,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#10b981',
     borderRadius: 3,
   },
 
-  // Fallback Notice Box
+  // Fallback Notice Box (Matches app Commute Guard info card)
   fallbackNoticeBox: {
-    backgroundColor: '#1e1b4b',
+    backgroundColor: '#eff6ff',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 20,
+    marginBottom: 18,
     borderWidth: 1,
-    borderColor: '#4338ca',
+    borderColor: '#bfdbfe',
+  },
+  fallbackHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  fallbackBoltIcon: {
+    fontSize: 14,
   },
   fallbackNoticeTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#a5b4fc',
-    marginBottom: 4,
+    color: '#1e40af',
   },
   fallbackNoticeText: {
     fontSize: 12,
-    color: '#cbd5e1',
+    color: '#334155',
     lineHeight: 18,
   },
 
-  // Section Header
+  // Section Header (Matches index.tsx and location.tsx)
   sectionHeader: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#94a3b8',
+    color: '#64748b',
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
     marginBottom: 12,
     marginLeft: 4,
   },
 
-  // Plugin Cards
+  // Plugin Cards (Clean white surfaces, clear typography)
   pluginCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -481,7 +524,7 @@ const styles = StyleSheet.create({
   brandBadgeText: {
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   cardTitleCol: {
     flex: 1,
@@ -489,45 +532,55 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffffff',
+    color: '#0f172a',
   },
   cardTagline: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: '#64748b',
     marginTop: 2,
   },
+
+  // Connect / Connected buttons
   connectCtaBtn: {
-    backgroundColor: '#4338ca',
-    paddingVertical: 8,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingVertical: 7,
     paddingHorizontal: 14,
     borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   connectCtaText: {
-    color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
+    color: '#2563eb',
   },
   connectedPill: {
-    backgroundColor: '#064e3b',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 20,
+    backgroundColor: '#f0fdf4',
     borderWidth: 1,
-    borderColor: '#10b981',
+    borderColor: '#bbf7d0',
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   connectedPillText: {
-    color: '#34d399',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
+    color: '#15803d',
   },
 
-  // Features List
+  // Feature Points
   cardFeaturesList: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 10,
     marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
     gap: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
   featureItemRow: {
     flexDirection: 'row',
@@ -536,58 +589,79 @@ const styles = StyleSheet.create({
   },
   featureBullet: {
     fontSize: 12,
-    color: '#10b981',
     fontWeight: '700',
+    color: '#16a34a',
   },
   featureItemText: {
     fontSize: 12,
-    color: '#cbd5e1',
+    color: '#475569',
+    fontWeight: '500',
+    flex: 1,
   },
 
+  // Connected Footer
   linkedFooterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 12,
+    paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: '#f1f5f9',
+  },
+  activeDotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  greenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#16a34a',
   },
   sessionActiveText: {
-    fontSize: 11,
-    color: '#34d399',
+    fontSize: 12,
     fontWeight: '500',
+    color: '#15803d',
   },
   disconnectLinkText: {
-    fontSize: 11,
-    color: '#ef4444',
+    fontSize: 12,
     fontWeight: '600',
+    color: '#dc2626',
   },
 
   // Privacy Shield Card
   privacyShieldCard: {
-    flexDirection: 'row',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     padding: 16,
-    marginTop: 8,
-    gap: 12,
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#e2e8f0',
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   privacyShieldEmoji: {
-    fontSize: 24,
+    fontSize: 22,
+    marginTop: 1,
   },
   privacyShieldTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#ffffff',
-    marginBottom: 4,
+    color: '#0f172a',
+    marginBottom: 2,
   },
   privacyShieldText: {
-    fontSize: 11,
-    color: '#94a3b8',
-    lineHeight: 16,
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 17,
   },
 
   // Sticky Bottom Bar
@@ -596,31 +670,42 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#0b1120',
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    backgroundColor: '#ffffff',
     borderTopWidth: 1,
-    borderTopColor: '#1e293b',
+    borderTopColor: '#e2e8f0',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 10,
   },
   primaryContinueBtn: {
-    backgroundColor: '#4338ca',
-    borderRadius: 28,
+    backgroundColor: '#2563eb',
+    borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
   },
   primaryContinueText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
   },
   secondarySkipBtn: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   secondarySkipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#94a3b8',
+    color: '#64748b',
   },
 });

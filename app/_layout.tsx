@@ -43,9 +43,9 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: '#000' },
-          headerTintColor: '#fff',
-          headerTitleStyle: { color: '#fff' },
+          headerStyle: { backgroundColor: '#ffffff' },
+          headerTintColor: '#0f172a',
+          headerTitleStyle: { color: '#0f172a', fontWeight: '700' },
           headerShadowVisible: false,
           headerBackButtonDisplayMode: 'minimal',
         }}
@@ -55,7 +55,7 @@ export default function RootLayout() {
         <Stack.Screen name="location" options={{ title: 'Enter Location', headerRight: () => null }} />
         <Stack.Screen name="results" options={{ title: 'Available Rides', headerRight: () => null }} />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style="dark" />
     </ThemeProvider>
   );
 }

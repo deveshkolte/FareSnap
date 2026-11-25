@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
-import { Stack, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -134,6 +134,12 @@ export default function LocationScreen() {
       if (dropAbortRef.current) dropAbortRef.current.abort();
     };
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      getLinkedProviders().then(setLinkedProviders).catch(() => {});
+    }, [])
+  );
 
   const loadInitialContext = async () => {
     try {
@@ -672,7 +678,7 @@ export default function LocationScreen() {
           headerRight: () => (
             <TouchableOpacity
               style={styles.headerPulseBtn}
-              onPress={() => router.push('/plugins' as any)}
+              onPress={() => router.push('/plugins?from=location' as any)}
               activeOpacity={0.8}
             >
               <Text style={styles.headerPulseIcon}>🔌 {linkedCount}/4</Text>
