@@ -337,7 +337,7 @@ export default function HomeScreen() {
         {/* Instant Where To Search Bar */}
         <TouchableOpacity
           style={styles.searchTriggerBox}
-          onPress={() => router.push('/location')}
+          onPress={() => router.push('/plugins' as any)}
           activeOpacity={0.85}
         >
           <Text style={styles.searchTriggerIcon}>🔍</Text>
@@ -348,7 +348,7 @@ export default function HomeScreen() {
 
         <TouchableOpacity
           style={styles.primaryButton}
-          onPress={() => router.push('/location')}
+          onPress={() => router.push('/plugins' as any)}
           activeOpacity={0.85}
         >
           <Text style={styles.primaryButtonText}>Compare rides</Text>

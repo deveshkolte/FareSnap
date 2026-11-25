@@ -51,6 +51,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="plugins" options={{ title: 'Connect Ride Plugins', headerRight: () => null }} />
         <Stack.Screen name="location" options={{ title: 'Enter Location', headerRight: () => null }} />
         <Stack.Screen name="results" options={{ title: 'Available Rides', headerRight: () => null }} />
       </Stack>

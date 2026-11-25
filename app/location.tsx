@@ -672,7 +672,7 @@ export default function LocationScreen() {
           headerRight: () => (
             <TouchableOpacity
               style={styles.headerPulseBtn}
-              onPress={() => setLinkModalVisible(true)}
+              onPress={() => router.push('/plugins' as any)}
               activeOpacity={0.8}
             >
               <Text style={styles.headerPulseIcon}>🔌 {linkedCount}/4</Text>

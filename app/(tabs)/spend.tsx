@@ -187,7 +187,7 @@ export default function SpendLensScreen() {
               </Text>
               <TouchableOpacity
                 style={styles.ctaButton}
-                onPress={() => router.push('/location')}
+                onPress={() => router.push('/plugins' as any)}
                 activeOpacity={0.85}
               >
                 <Text style={styles.ctaButtonText}>Compare rides →</Text>
