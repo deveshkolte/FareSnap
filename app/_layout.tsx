@@ -12,7 +12,7 @@ const CLOUD_BAP_URL = (
 ).replace(/\/$/, '');
 
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
+  anchor: '(tabs)',
 };
 
 export default function RootLayout() {

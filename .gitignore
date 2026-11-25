@@ -31,16 +31,11 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
-
-# typescript
+.env*
 *.tsbuildinfo
-
-app-example
 
 # generated native folders
 /ios
 /android
-.env
 *.apk
 ondc-test/data/
