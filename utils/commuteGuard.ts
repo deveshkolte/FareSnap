@@ -47,12 +47,11 @@ export async function saveCommuteRoute(
 
 /**
  * Evaluates live weather & time-of-day surge conditions for the user's saved commute route.
+ * Strictly uses the explicitly pinned commute route — never silently falls back to arbitrary history.
  */
-export async function evaluateCommuteGuard(
-  fallbackRoute?: SavedCommuteRoute
-): Promise<CommuteGuardStatus | null> {
-  const route = (await getSavedCommuteRoute()) || fallbackRoute;
-  if (!route) return null;
+export async function evaluateCommuteGuard(): Promise<CommuteGuardStatus | null> {
+  const route = await getSavedCommuteRoute();
+  if (!route || !route.pickup?.trim() || !route.destination?.trim()) return null;
 
   const hour = new Date().getHours();
   const isMorningPeak = hour >= 8 && hour <= 10;

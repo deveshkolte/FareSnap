@@ -1,6 +1,7 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   AppState,
   KeyboardAvoidingView,
@@ -633,6 +634,24 @@ export default function ResultsScreen() {
   const [monetization, setMonetization] = useState<RemoteMonetizationConfig>(
     getMonetizationConfig()
   );
+
+  useEffect(() => {
+    getSavedCommuteRoute()
+      .then((saved) => {
+        if (
+          saved &&
+          saved.pickup?.trim().toLowerCase() ===
+            pickup.address?.trim().toLowerCase() &&
+          saved.destination?.trim().toLowerCase() ===
+            destination.address?.trim().toLowerCase()
+        ) {
+          setCommutePinned(true);
+        } else {
+          setCommutePinned(false);
+        }
+      })
+      .catch(() => {});
+  }, [pickup.address, destination.address]);
 
   // Linked Providers & Real Scraped Live Products from WebView Pool
   const [linkModalVisible, setLinkModalVisible] = useState(false);
@@ -1517,17 +1536,25 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                   if (commutePinned) {
                     await saveCommuteRoute(null);
                     setCommutePinned(false);
+                    Alert.alert(
+                      'Commute Unpinned',
+                      'This route has been removed from your daily Commute Guard.'
+                    );
                   } else {
                     await saveCommuteRoute({
                       pickup: pickup.address,
                       destination: destination.address,
-                      pickupLat: resolvedPickupCoords?.lat,
-                      pickupLng: resolvedPickupCoords?.lng,
-                      destLat: resolvedDropCoords?.lat,
-                      destLng: resolvedDropCoords?.lng,
+                      pickupLat: resolvedPickupCoords?.lat ?? pickup.lat,
+                      pickupLng: resolvedPickupCoords?.lng ?? pickup.lng,
+                      destLat: resolvedDropCoords?.lat ?? destination.lat,
+                      destLng: resolvedDropCoords?.lng ?? destination.lng,
                       updatedAt: Date.now(),
                     });
                     setCommutePinned(true);
+                    Alert.alert(
+                      'Commute Pinned',
+                      '📌 Saved to Commute Guard! FareSnap will monitor live traffic, rain, and surge pricing for this route on your home screen.'
+                    );
                   }
                 }}
               >

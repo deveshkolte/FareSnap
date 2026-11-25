@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CommuteGuardStatus,
   evaluateCommuteGuard,
+  saveCommuteRoute,
 } from '../../utils/commuteGuard';
 import {
   getLifetimeSavings,
@@ -72,41 +73,40 @@ export default function HomeScreen() {
   // Onboarding slide animation
   const [slideX] = useState(() => new Animated.Value(0));
 
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const [onboarded, rawHistory, lifeSavings] = await Promise.all([
-          AsyncStorage.getItem('faresnap_onboarded'),
-          AsyncStorage.getItem('faresnap_route_history'),
-          getLifetimeSavings(),
-        ]);
-        setShowOnboarding(!onboarded);
-        let parsedHistory: RouteHistoryItem[] = [];
-        if (rawHistory) {
-          parsedHistory = JSON.parse(rawHistory);
-          setRecentRoutes(parsedHistory);
-        }
-        setSavings(lifeSavings);
-        const topFallback = parsedHistory[0]
-          ? {
-              pickup: parsedHistory[0].pickup,
-              destination: parsedHistory[0].destination,
-              pickupLat: parsedHistory[0].pickupLat,
-              pickupLng: parsedHistory[0].pickupLng,
-              destLat: parsedHistory[0].destLat,
-              destLng: parsedHistory[0].destLng,
-              updatedAt: parsedHistory[0].timestamp,
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      const check = async () => {
+        try {
+          const [onboarded, rawHistory, lifeSavings, cg] = await Promise.all([
+            AsyncStorage.getItem('faresnap_onboarded'),
+            AsyncStorage.getItem('faresnap_route_history'),
+            getLifetimeSavings(),
+            evaluateCommuteGuard(),
+          ]);
+          if (!isMounted) return;
+          setShowOnboarding(!onboarded);
+          if (rawHistory) {
+            try {
+              setRecentRoutes(JSON.parse(rawHistory));
+            } catch {
+              setRecentRoutes([]);
             }
-          : undefined;
-        evaluateCommuteGuard(topFallback)
-          .then((cg) => setCommuteGuard(cg))
-          .catch(() => {});
-      } catch {
-        setShowOnboarding(false);
-      }
-    };
-    check();
-  }, []);
+          } else {
+            setRecentRoutes([]);
+          }
+          setSavings(lifeSavings);
+          setCommuteGuard(cg);
+        } catch {
+          if (isMounted) setShowOnboarding(false);
+        }
+      };
+      check();
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   // Keep onboarding slide aligned if screen dimensions change (e.g., rotation/split-screen)
   useEffect(() => {
@@ -275,37 +275,52 @@ export default function HomeScreen() {
 
         {/* Commute Guard Proactive Alert Card */}
         {commuteGuard && (
-          <TouchableOpacity
+          <View
             style={[
               styles.commuteGuardCard,
               commuteGuard.isAlert && styles.commuteGuardCardAlert,
             ]}
-            onPress={() =>
-              router.push({
-                pathname: '/results',
-                params: {
-                  pickup: JSON.stringify({
-                    address: commuteGuard.route.pickup,
-                    lat: commuteGuard.route.pickupLat,
-                    lng: commuteGuard.route.pickupLng,
-                  }),
-                  destination: JSON.stringify({
-                    address: commuteGuard.route.destination,
-                    lat: commuteGuard.route.destLat,
-                    lng: commuteGuard.route.destLng,
-                  }),
-                },
-              })
-            }
-            activeOpacity={0.85}
           >
-            <Text style={styles.commuteGuardHeadline} numberOfLines={1}>
-              {commuteGuard.headline}
-            </Text>
-            <Text style={styles.commuteGuardSub} numberOfLines={2}>
-              {commuteGuard.subline}
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.commuteGuardMainAction}
+              onPress={() =>
+                router.push({
+                  pathname: '/results',
+                  params: {
+                    pickup: JSON.stringify({
+                      address: commuteGuard.route.pickup,
+                      lat: commuteGuard.route.pickupLat,
+                      lng: commuteGuard.route.pickupLng,
+                    }),
+                    destination: JSON.stringify({
+                      address: commuteGuard.route.destination,
+                      lat: commuteGuard.route.destLat,
+                      lng: commuteGuard.route.destLng,
+                    }),
+                  },
+                })
+              }
+              activeOpacity={0.85}
+            >
+              <Text style={styles.commuteGuardHeadline} numberOfLines={1}>
+                {commuteGuard.headline}
+              </Text>
+              <Text style={styles.commuteGuardSub} numberOfLines={2}>
+                {commuteGuard.subline}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.commuteGuardDismissBtn}
+              onPress={async () => {
+                await saveCommuteRoute(null);
+                setCommuteGuard(null);
+              }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.commuteGuardDismissText}>✕</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Instant Where To Search Bar */}
@@ -595,10 +610,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   commuteGuardCardAlert: {
     backgroundColor: '#eff6ff',
     borderColor: '#bfdbfe',
+  },
+  commuteGuardMainAction: {
+    flex: 1,
+    marginRight: 10,
   },
   commuteGuardHeadline: {
     fontSize: 13,
@@ -610,6 +632,22 @@ const styles = StyleSheet.create({
     color: '#475569',
     marginTop: 2,
     lineHeight: 16,
+  },
+  commuteGuardDismissBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  commuteGuardDismissText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    lineHeight: 14,
   },
   searchTriggerBox: {
     flexDirection: 'row',
