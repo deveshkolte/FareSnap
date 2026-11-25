@@ -75,7 +75,7 @@ export default function SpendLensScreen() {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, paddingBottom: insets.bottom },
+        { paddingTop: insets.top },
       ]}
     >
       <StatusBar barStyle="dark-content" />
