@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Animated,
+  Image,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -34,7 +35,7 @@ type RouteHistoryItem = {
 
 const SLIDES = [
   {
-    emoji: '🚗',
+    image: require('../../assets/images/faresnap_logo.png'),
     title: 'Compare all ride apps',
     subtitle: 'See prices from Uber, Ola, Rapido, Namma Yatri and 5 more — all in one place.',
   },
@@ -182,7 +183,15 @@ export default function HomeScreen() {
             {SLIDES.map((slide, i) => (
               <View key={i} style={[styles.slide, { width }]}>
                 <View style={styles.emojiContainer}>
-                  <Text style={styles.onboardEmoji}>{slide.emoji}</Text>
+                  {'image' in slide && slide.image ? (
+                    <Image
+                      source={slide.image}
+                      style={styles.onboardImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <Text style={styles.onboardEmoji}>{'emoji' in slide ? slide.emoji : '⚡'}</Text>
+                  )}
                 </View>
                 <Text style={styles.onboardTitle}>{slide.title}</Text>
                 <Text style={styles.onboardSubtitle}>{slide.subtitle}</Text>
@@ -244,9 +253,11 @@ export default function HomeScreen() {
           ]}
         >
         <View style={styles.logoArea}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoEmoji}>🚗</Text>
-          </View>
+          <Image
+            source={require('../../assets/images/faresnap_logo.png')}
+            style={styles.brandLogoImage}
+            resizeMode="contain"
+          />
           <Text style={styles.appName}>FareSnap</Text>
           <Text style={styles.appTagline}>Compare all ride apps instantly</Text>
         </View>
@@ -426,15 +437,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 36,
   },
   emojiContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 28,
-    backgroundColor: '#eff6ff',
+    width: 96,
+    height: 96,
+    borderRadius: 24,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 36,
+    marginBottom: 32,
     borderWidth: 1,
-    borderColor: '#bfdbfe',
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+  },
+  onboardImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 24,
   },
   onboardEmoji: {
     fontSize: 48,
@@ -538,21 +555,18 @@ const styles = StyleSheet.create({
   },
   logoArea: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
-  logoCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 24,
-    backgroundColor: '#eff6ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
-  },
-  logoEmoji: {
-    fontSize: 40,
+  brandLogoImage: {
+    width: 84,
+    height: 84,
+    borderRadius: 22,
+    marginBottom: 14,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 6,
   },
   appName: {
     fontSize: 36,
