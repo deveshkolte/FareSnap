@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinkAppsModal } from '../components/LinkAppsModal';
 import { LiveFareScraperPool } from '../components/LiveFareScraperPool';
 import { RoutePreviewMapModal } from '../components/RoutePreviewMapModal';
@@ -568,6 +569,7 @@ const buildLocalFallbackInsight = (
 
 export default function ResultsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const pickup: LocationData = useMemo(() => {
     try {
@@ -2060,11 +2062,19 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             );
           })}
 
-          <View style={{ height: 96 }} />
+          <View style={{ height: 80 + Math.max(insets.bottom, 24) }} />
         </ScrollView>
 
         {/* Sticky Bottom "Book Ride" Bar */}
-        <View style={styles.stickyBottomBar}>
+        <View
+          style={[
+            styles.stickyBottomBar,
+            {
+              paddingBottom:
+                14 + Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0),
+            },
+          ]}
+        >
           <TouchableOpacity
             style={[
               styles.bookRidePrimaryBtn,
@@ -2091,7 +2101,12 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         onRequestClose={() => setConfirmRideSheetVisible(false)}
       >
         <View style={styles.sheetOverlay}>
-          <View style={styles.confirmSheet}>
+          <View
+            style={[
+              styles.confirmSheet,
+              { paddingBottom: Math.max(insets.bottom + 20, 30) },
+            ]}
+          >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Confirm your ride</Text>
             <Text style={styles.sheetRouteMeta}>
@@ -2219,7 +2234,12 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
         }}
       >
         <View style={styles.sheetOverlay}>
-          <View style={styles.confirmSheet}>
+          <View
+            style={[
+              styles.confirmSheet,
+              { paddingBottom: Math.max(insets.bottom + 20, 30) },
+            ]}
+          >
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Payment Options</Text>
 
@@ -2310,7 +2330,12 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
           style={styles.sheetOverlay}
           behavior={Platform.OS === 'android' ? 'height' : 'padding'}
         >
-          <View style={styles.confirmSheet}>
+          <View
+            style={[
+              styles.confirmSheet,
+              { paddingBottom: Math.max(insets.bottom + 20, 30) },
+            ]}
+          >
             <View style={styles.sheetHandle} />
 
             {bookingPhase === 'finding' && (
