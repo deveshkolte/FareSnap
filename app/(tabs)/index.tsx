@@ -228,15 +228,21 @@ export default function HomeScreen() {
 
   // Home screen
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
 
-      <Animated.View
-        style={[
-          styles.homeContent,
-          { opacity: homeFade, transform: [{ translateY: homeSlide }] },
-        ]}
+      <ScrollView
+        contentContainerStyle={styles.scrollHomeContent}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        keyboardShouldPersistTaps="handled"
       >
+        <Animated.View
+          style={[
+            styles.homeContent,
+            { opacity: homeFade, transform: [{ translateY: homeSlide }] },
+          ]}
+        >
         <View style={styles.logoArea}>
           <View style={styles.logoCircle}>
             <Text style={styles.logoEmoji}>🚗</Text>
@@ -366,7 +372,8 @@ export default function HomeScreen() {
             Enter pickup and drop to compare fares across all apps
           </Text>
         )}
-      </Animated.View>
+        </Animated.View>
+      </ScrollView>
     </View>
   );
 }
@@ -504,37 +511,43 @@ const styles = StyleSheet.create({
   },
 
   // Home screen
+  scrollHomeContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 20,
+  },
   homeContent: {
     flex: 1,
     justifyContent: 'center',
+    paddingVertical: 12,
   },
   logoArea: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 24,
   },
   logoCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 28,
+    width: 80,
+    height: 80,
+    borderRadius: 24,
     backgroundColor: '#eff6ff',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#bfdbfe',
   },
   logoEmoji: {
-    fontSize: 48,
+    fontSize: 40,
   },
   appName: {
-    fontSize: 40,
+    fontSize: 36,
     fontWeight: '800',
     color: '#0f172a',
-    letterSpacing: -1,
-    marginBottom: 8,
+    letterSpacing: -0.8,
+    marginBottom: 6,
   },
   appTagline: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#64748b',
     fontWeight: '500',
   },
@@ -542,7 +555,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 8,
-    marginBottom: 48,
+    marginBottom: 28,
   },
   featurePill: {
     backgroundColor: '#eff6ff',
