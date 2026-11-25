@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 type Props = {
@@ -89,6 +90,7 @@ export function ConfirmPickupMapModal({
   onCancel,
   onConfirm,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [coords, setCoords] = useState({ lat: initialLat, lng: initialLng });
   const [address, setAddress] = useState(initialAddress);
   const [reverseLoading, setReverseLoading] = useState(false);
@@ -161,7 +163,12 @@ export function ConfirmPickupMapModal({
       onRequestClose={onCancel}
     >
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View
+          style={[
+            styles.sheet,
+            { paddingBottom: Math.max(insets.bottom + 16, 28) },
+          ]}
+        >
           <View style={styles.handleBar} />
           <Text style={styles.title}>Confirm Pickup</Text>
 

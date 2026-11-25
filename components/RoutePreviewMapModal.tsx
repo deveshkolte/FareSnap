@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { openWalkingDirections } from '../utils/appUrls';
 import type { RouteCoords } from '../utils/distanceEngine';
@@ -113,6 +114,7 @@ export function RoutePreviewMapModal({
   destCoords,
   onClose,
 }: Props) {
+  const insets = useSafeAreaInsets();
   return (
     <Modal
       visible={visible}
@@ -121,7 +123,12 @@ export function RoutePreviewMapModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View
+          style={[
+            styles.sheet,
+            { paddingBottom: Math.max(insets.bottom + 16, 28) },
+          ]}
+        >
           <View style={styles.handle} />
           <Text style={styles.title}>
             {smartPickupCoords

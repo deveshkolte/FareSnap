@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConfirmPickupMapModal } from '../components/ConfirmPickupMapModal';
 import { LinkAppsModal } from '../components/LinkAppsModal';
 import {
@@ -82,6 +83,7 @@ const POPULAR_HUBS: {
 
 export default function LocationScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [activeCity, setActiveCity] =
     useState<Exclude<CityKey, 'default'>>('bangalore');
   const [customGpsCity, setCustomGpsCity] = useState<{
@@ -680,7 +682,10 @@ export default function LocationScreen() {
       />
       <ScrollView
         style={styles.container}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Math.max(insets.bottom + 24, 48) },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >

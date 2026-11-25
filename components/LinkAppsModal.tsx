@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import {
   buildAutoSelectVehicleScript,
@@ -59,6 +60,7 @@ export function LinkAppsModal({
   onLiveProductsScraped,
   onClose,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [activeWebProvider, setActiveWebProvider] =
     useState<LinkableProviderInfo | null>(null);
   const [detectedLoggedIn, setDetectedLoggedIn] = useState(false);
@@ -152,7 +154,12 @@ export function LinkAppsModal({
       }}
     >
       {activeWebProvider ? (
-        <View style={styles.webviewContainer}>
+        <View
+          style={[
+            styles.webviewContainer,
+            { paddingTop: insets.top, paddingBottom: insets.bottom },
+          ]}
+        >
           <View style={styles.webviewHeader}>
             <TouchableOpacity
               onPress={() => {
@@ -323,7 +330,7 @@ export function LinkAppsModal({
           )}
         </View>
       ) : (
-        <View style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
           <View style={styles.topBar}>
             <View style={{ flex: 1 }} />
             <TouchableOpacity style={styles.closeCircle} onPress={onClose}>
@@ -332,7 +339,10 @@ export function LinkAppsModal({
           </View>
 
           <ScrollView
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: Math.max(insets.bottom + 20, 32) },
+            ]}
             showsVerticalScrollIndicator={false}
           >
             <Text style={styles.heroTitle}>Compare & Book Rides</Text>
