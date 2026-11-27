@@ -39,3 +39,6 @@ yarn-error.*
 /android
 *.apk
 ondc-test/data/
+
+# private context documentation (never push to github)
+CONTEXT.md
