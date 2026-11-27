@@ -1,12 +1,36 @@
 # FareSnap (RideCompare) — Multi-Modal Urban Mobility Reference Archive
 
-[![Latest Release](https://img.shields.io/github/v/release/deveshkolte/FareSnap?color=2563eb&label=Latest%20Release&style=flat-square)](https://github.com/deveshkolte/FareSnap/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
-[![Expo SDK 58](https://img.shields.io/badge/Expo-SDK_58-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev)
+<p align="center">
+  <a href="https://github.com/deveshkolte/FareSnap/releases/latest/download/faresnap.apk">
+    <img src="https://img.shields.io/badge/📲_Download_Android_APK-v2.1.0_(95_MB)-2563eb?style=for-the-badge&logo=android&logoColor=white" alt="Download Android APK" height="40" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/deveshkolte/FareSnap/releases/latest">
+    <img src="https://img.shields.io/badge/📦_GitHub_Releases-v2.1.0-10b981?style=for-the-badge&logo=github&logoColor=white" alt="View Releases" height="40" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/deveshkolte/FareSnap/releases/latest"><img src="https://img.shields.io/github/v/release/deveshkolte/FareSnap?color=2563eb&label=Latest%20Release&style=flat-square" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="License" /></a>
+  <a href="https://expo.dev"><img src="https://img.shields.io/badge/Expo-SDK_58-000020?style=flat-square&logo=expo&logoColor=white" alt="Expo SDK 58" /></a>
+</p>
 
 > **Status: Archived Prototype** — Consumer multi-app aggregation was sunset due to walled-garden anti-bot constraints. The core ONDC Beckn TRV10 BAP gateway and Indian geo-intelligence engines are being extracted into a standalone open-source protocol kit.
 
-📲 **[Download Latest APK (v2.1.0)](https://github.com/deveshkolte/FareSnap/releases/latest)** — Standalone Android Preview Build
+---
+
+### 📲 Standalone Android APK Download
+
+Install and test the compiled Android application directly without configuring a local Node.js or Expo development environment:
+
+| Build | Download Link | Package Size | Compatibility |
+| :--- | :--- | :--- | :--- |
+| **FareSnap v2.1.0 (Latest)** | **[⬇️ Direct Download `faresnap.apk`](https://github.com/deveshkolte/FareSnap/releases/latest/download/faresnap.apk)** | `95.34 MB` | Android 10+ (arm64 / x86_64) |
+| **All Release Versions** | **[📦 Browse All GitHub Releases](https://github.com/deveshkolte/FareSnap/releases)** | — | APK & Release Notes |
+
+> [!TIP]
+> **Installation on Android:** Download the `.apk` on your device, tap to open, and allow *"Install unknown apps"* if prompted by your browser or file manager.
 
 ---
 
@@ -108,6 +132,9 @@ Rather than forcing login walls or relying exclusively on brittle web scrapers, 
 ---
 
 ## 4. Setup & Local Development
+
+> [!NOTE]
+> **Don't want to build from source?** You can grab the pre-compiled Android build directly from **[GitHub Releases: faresnap.apk (v2.1.0)](https://github.com/deveshkolte/FareSnap/releases/latest/download/faresnap.apk)**.
 
 ### Prerequisites
 - Node.js `20.x` LTS or `bun`
