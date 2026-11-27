@@ -503,11 +503,18 @@ export const buildProviderScraperScript = (
           currentUrl: location.href
         });
       } else {
+        var isRealAuthPath =
+          href.indexOf('/go') !== -1 ||
+          href.indexOf('/looking') !== -1 ||
+          href.indexOf('/product-selection') !== -1 ||
+          href.indexOf('/rides') !== -1 ||
+          Boolean(document.querySelector('[data-testid="user-profile"], [data-testid="header-user-menu"], .user-avatar'));
+
         postToHost({
           source: 'bh-page-api',
           type: 'AUTH_STATUS',
           providerId: PROVIDER_ID,
-          isLoggedIn: !isAuthWall,
+          isLoggedIn: isRealAuthPath && !isAuthWall,
           challengeRequired: isChallenge,
           currentUrl: location.href
         });

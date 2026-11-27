@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { checkAppInstalled } from '../utils/appUrls';
 import { LinkAppsModal } from '../components/LinkAppsModal';
 import {
   getLinkedProviders,
@@ -71,6 +72,7 @@ export default function PluginsScreen() {
     ola: false,
     namma_yatri: false,
   });
+  const [installedMap, setInstalledMap] = useState<Record<string, boolean>>({});
 
   const [linkModalVisible, setLinkModalVisible] = useState(false);
   const [activeModalProvider, setActiveModalProvider] =
@@ -85,6 +87,11 @@ export default function PluginsScreen() {
 
   useEffect(() => {
     loadLinkedStatus();
+    Promise.all([
+      checkAppInstalled('Uber').then((v) => setInstalledMap((m) => ({ ...m, uber: v }))),
+      checkAppInstalled('Ola').then((v) => setInstalledMap((m) => ({ ...m, ola: v }))),
+      checkAppInstalled('Rapido').then((v) => setInstalledMap((m) => ({ ...m, rapido: v }))),
+    ]).catch(() => {});
   }, [loadLinkedStatus]);
 
   const linkedCount = Object.values(linkedMap).filter(Boolean).length;
@@ -230,7 +237,11 @@ export default function PluginsScreen() {
                       numberOfLines={1}
                     >
                       {isLinked
-                        ? '✓ Live account linked · Exact surge active'
+                        ? '✓ Account linked · 1-tap booking ready'
+                        : provider.id === 'namma_yatri'
+                        ? '🔑 Direct SMS OTP link · Driver network'
+                        : installedMap[provider.id]
+                        ? '📱 App installed on phone · 1-tap ready'
                         : info.subtitle}
                     </Text>
                   </View>

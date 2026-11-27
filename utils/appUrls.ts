@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { wrapWithAffiliateTracking } from './monetizationEngine';
 
@@ -230,4 +230,39 @@ export async function openRideApp(
 
   await WebBrowser.openBrowserAsync(webUrl);
   return { handoffHasCoords, copiedAddress };
+}
+
+const STORE_URLS: Record<string, { android: string; ios: string }> = {
+  Uber: {
+    android: 'https://play.google.com/store/apps/details?id=com.ubercab',
+    ios: 'https://apps.apple.com/app/uber-request-a-ride/id368677368',
+  },
+  Ola: {
+    android: 'https://play.google.com/store/apps/details?id=com.olacabs.customer',
+    ios: 'https://apps.apple.com/app/ola-cabs/id539124565',
+  },
+  Rapido: {
+    android: 'https://play.google.com/store/apps/details?id=com.rapido.passenger',
+    ios: 'https://apps.apple.com/app/rapido-bike-taxi-auto/id1198464606',
+  },
+  'Namma Yatri': {
+    android: 'https://play.google.com/store/apps/details?id=in.juspay.nammayatri',
+    ios: 'https://apps.apple.com/app/namma-yatri/id6443905474',
+  },
+};
+
+export async function checkAppInstalled(appName: string): Promise<boolean> {
+  const config = APP_CONFIGS[appName];
+  if (!config) return false;
+  try {
+    return await Linking.canOpenURL(config.deepLink);
+  } catch {
+    return false;
+  }
+}
+
+export function getAppStoreUrl(appName: string): string {
+  const store = STORE_URLS[appName];
+  if (!store) return 'https://play.google.com/store';
+  return Platform.OS === 'ios' ? store.ios : store.android;
 }

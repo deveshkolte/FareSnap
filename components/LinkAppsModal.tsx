@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -12,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { checkAppInstalled, getAppStoreUrl } from '../utils/appUrls';
 import {
   buildAutoSelectVehicleScript,
   buildProviderScraperScript,
@@ -24,7 +26,6 @@ import {
 import {
   getStoredNammaYatriToken,
   sendNammaYatriOtp,
-  setStoredNammaYatriToken,
   verifyNammaYatriOtp,
 } from '../utils/nammaYatriDirectApi';
 
@@ -64,6 +65,9 @@ export function LinkAppsModal({
   const [activeWebProvider, setActiveWebProvider] =
     useState<LinkableProviderInfo | null>(null);
   const [detectedLoggedIn, setDetectedLoggedIn] = useState(false);
+  const [isAppInstalled, setIsAppInstalled] = useState<boolean | null>(null);
+  const [showWebPortal, setShowWebPortal] = useState(false);
+  const [checkingApp, setCheckingApp] = useState(false);
 
   // Direct API OTP state for Namma Yatri (api.moving.tech)
   const [nyPhone, setNyPhone] = useState('');
@@ -71,70 +75,87 @@ export function LinkAppsModal({
   const [nyAuthId, setNyAuthId] = useState<string | null>(null);
   const [nyLoading, setNyLoading] = useState(false);
   const [nyError, setNyError] = useState('');
-  const [bapConnected, setBapConnected] = useState<boolean | null>(null);
-  const [hasNyToken, setHasNyToken] = useState(false);
 
   useEffect(() => {
     if (visible && initialProviderId) {
       const found = LINKABLE_PROVIDERS.find((p) => p.id === initialProviderId);
       setActiveWebProvider(found || null);
+      setShowWebPortal(Boolean(routeOpts)); // if booking, go straight to webview
     } else if (!visible) {
       setActiveWebProvider(null);
       setDetectedLoggedIn(false);
+      setShowWebPortal(false);
+      setIsAppInstalled(null);
       setNyAuthId(null);
       setNyOtp('');
       setNyError('');
     }
+  }, [visible, initialProviderId, routeOpts]);
 
-    if (visible) {
-      getStoredNammaYatriToken()
-        .then((t) => setHasNyToken(Boolean(t)))
-        .catch(() => {});
-      const bapUrl = (
-        process.env.EXPO_PUBLIC_ONDC_BAP_URL ||
-        'https://faresnap-ondc-bap-gateway.onrender.com'
-      ).replace(/\/$/, '');
-      fetch(`${bapUrl}/health`)
-        .then((r) => setBapConnected(r.ok))
-        .catch(() => setBapConnected(false));
+  // Check if native app is installed when active provider changes
+  useEffect(() => {
+    if (activeWebProvider && activeWebProvider.id !== 'namma_yatri') {
+      setCheckingApp(true);
+      checkAppInstalled(activeWebProvider.name)
+        .then((installed) => {
+          setIsAppInstalled(installed);
+        })
+        .catch(() => setIsAppInstalled(false))
+        .finally(() => setCheckingApp(false));
     }
-  }, [visible, initialProviderId]);
+  }, [activeWebProvider]);
 
   const handleNySendOtp = async () => {
+    const cleanPhone = nyPhone.replace(/\D/g, '');
+    if (cleanPhone.length !== 10) {
+      setNyError('Please enter a valid 10-digit mobile number.');
+      return;
+    }
     setNyError('');
     setNyLoading(true);
     try {
-      const res = await sendNammaYatriOtp(nyPhone);
+      const res = await sendNammaYatriOtp(cleanPhone);
       setNyAuthId(res.authId);
     } catch (err: any) {
-      setNyError(err?.message || 'Could not send OTP.');
+      setNyError(err?.message || 'Could not send OTP. Please try again.');
     } finally {
       setNyLoading(false);
     }
   };
 
   const handleNyVerifyOtp = async () => {
-    if (!nyAuthId) return;
+    if (!nyAuthId || nyOtp.trim().length < 4) {
+      setNyError('Please enter the 4-digit OTP sent to your phone.');
+      return;
+    }
     setNyError('');
     setNyLoading(true);
     try {
-      await verifyNammaYatriOtp(nyAuthId, nyOtp);
+      await verifyNammaYatriOtp(nyAuthId, nyOtp.trim());
       onToggleLink('namma_yatri', true);
       setNyAuthId(null);
       setNyOtp('');
       setActiveWebProvider(null);
-      if (initialProviderId) {
-        onClose();
-      }
+      onClose();
     } catch (err: any) {
-      setNyError(err?.message || 'Invalid OTP.');
+      setNyError(err?.message || 'Invalid OTP. Please check and try again.');
     } finally {
       setNyLoading(false);
     }
   };
 
-  const linkedProviders = LINKABLE_PROVIDERS.filter((p) => linkedMap[p.id]);
-  const unlinkedProviders = LINKABLE_PROVIDERS.filter((p) => !linkedMap[p.id]);
+  const handleLinkInstalledApp = () => {
+    if (!activeWebProvider) return;
+    onToggleLink(activeWebProvider.id, true);
+    setActiveWebProvider(null);
+    onClose();
+  };
+
+  const handleOpenStore = () => {
+    if (!activeWebProvider) return;
+    const storeUrl = getAppStoreUrl(activeWebProvider.name);
+    Linking.openURL(storeUrl).catch(() => {});
+  };
 
   const getWebViewUrl = (provider: LinkableProviderInfo) => {
     if (routeOpts) {
@@ -143,154 +164,157 @@ export function LinkAppsModal({
     return provider.loginUrl;
   };
 
+  const handleClose = () => {
+    if (showWebPortal && !routeOpts) {
+      setShowWebPortal(false);
+    } else {
+      setActiveWebProvider(null);
+      onClose();
+    }
+  };
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={() => {
-        if (activeWebProvider && !initialProviderId) {
-          setActiveWebProvider(null);
-        } else {
-          onClose();
-        }
-      }}
+      onRequestClose={handleClose}
     >
-      {activeWebProvider ? (
-        <View
-          style={[
-            styles.webviewContainer,
-            { paddingTop: insets.top, paddingBottom: insets.bottom },
-          ]}
-        >
-          <View style={styles.webviewHeader}>
-            <TouchableOpacity
-              onPress={() => {
-                if (initialProviderId) {
-                  onClose();
-                } else {
-                  setActiveWebProvider(null);
-                }
-              }}
-              style={styles.closeCircle}
-            >
-              <Text style={styles.closeCircleText}>←</Text>
-            </TouchableOpacity>
-            <View style={{ flex: 1, marginHorizontal: 12 }}>
-              <Text style={styles.webviewTitle}>
-                {routeOpts?.autoSelectProduct
-                  ? `Book ${activeWebProvider.name} (${routeOpts.autoSelectProduct})`
-                  : `Link ${activeWebProvider.name}`}
-              </Text>
-              <Text style={styles.webviewSubtitle}>
-                {detectedLoggedIn
-                  ? '🟢 Active session detected on device'
-                  : 'Log in once with OTP · Session stays on your device'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.doneLinkBtn}
-              onPress={() => {
-                onToggleLink(activeWebProvider.id, true);
-                if (initialProviderId) {
-                  onClose();
-                } else {
-                  setActiveWebProvider(null);
-                }
-              }}
-            >
-              <Text style={styles.doneLinkBtnText}>
-                {routeOpts?.autoSelectProduct ? 'Done ✓' : 'Linked ✓'}
-              </Text>
-            </TouchableOpacity>
+      <View
+        style={[
+          styles.container,
+          { paddingTop: insets.top, paddingBottom: insets.bottom },
+        ]}
+      >
+        {/* Top Navigation Bar */}
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            style={styles.closeCircle}
+            onPress={handleClose}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Text style={styles.closeCircleText}>
+              {showWebPortal && !routeOpts ? '←' : '✕'}
+            </Text>
+          </TouchableOpacity>
+          <View style={styles.topBarTitleCol}>
+            <Text style={styles.topBarTitle}>
+              {activeWebProvider ? `Connect ${activeWebProvider.name}` : 'Connect Ride Apps'}
+            </Text>
+            <Text style={styles.topBarSubtitle}>
+              {activeWebProvider?.id === 'namma_yatri'
+                ? 'Official SMS OTP Verification'
+                : showWebPortal
+                ? 'Sign in on official web portal'
+                : '1-Tap App Bridge & Session Linking'}
+            </Text>
           </View>
+        </View>
 
-          {activeWebProvider.id === 'namma_yatri' && !routeOpts?.autoSelectProduct ? (
-            <View style={styles.nyOtpContainer}>
-              <View style={styles.nyBrandBadge}>
-                <Text style={styles.nyBrandBadgeText}>NY</Text>
-              </View>
-              <Text style={styles.nyTitle}>Link Namma Yatri via OTP</Text>
-              <Text style={styles.nySubtitle}>
-                Connects directly to Namma Yatri (api.moving.tech) for live zero-surge Auto & Cab fares.
-              </Text>
+        {/* Content Area */}
+        {activeWebProvider?.id === 'namma_yatri' && !routeOpts?.autoSelectProduct ? (
+          // Namma Yatri Direct SMS OTP Verification UI
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.nyBrandBadge}>
+              <Text style={styles.nyBrandBadgeText}>NY</Text>
+            </View>
+            <Text style={styles.nyTitle}>Namma Yatri / ONDC</Text>
+            <Text style={styles.nySubtitle}>
+              Connect directly via official Moving Tech API (`api.moving.tech`) for live zero-commission driver fares and direct booking.
+            </Text>
 
-              {!nyAuthId ? (
-                <>
+            {!nyAuthId ? (
+              <View style={styles.cardBox}>
+                <Text style={styles.inputLabel}>Enter Registered Mobile Number</Text>
+                <View style={styles.phoneInputRow}>
+                  <Text style={styles.phoneCountryCode}>+91</Text>
                   <TextInput
-                    style={styles.nyInput}
+                    style={styles.phoneInput}
                     keyboardType="phone-pad"
                     maxLength={10}
-                    placeholder="Enter 10-digit mobile number"
+                    placeholder="10-digit mobile number"
                     placeholderTextColor="#94a3b8"
                     value={nyPhone}
                     onChangeText={setNyPhone}
                   />
-                  {nyError ? (
-                    <Text style={styles.nyErrorText}>{nyError}</Text>
-                  ) : null}
-                  <TouchableOpacity
-                    style={styles.nyPrimaryBtn}
-                    onPress={handleNySendOtp}
-                    disabled={nyLoading}
-                  >
-                    {nyLoading ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <Text style={styles.nyPrimaryBtnText}>Send OTP →</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <TextInput
-                    style={styles.nyInput}
-                    keyboardType="number-pad"
-                    maxLength={6}
-                    placeholder="Enter 4-digit OTP"
-                    placeholderTextColor="#94a3b8"
-                    value={nyOtp}
-                    onChangeText={setNyOtp}
-                  />
-                  {nyError ? (
-                    <Text style={styles.nyErrorText}>{nyError}</Text>
-                  ) : null}
-                  <TouchableOpacity
-                    style={styles.nyPrimaryBtn}
-                    onPress={handleNyVerifyOtp}
-                    disabled={nyLoading}
-                  >
-                    {nyLoading ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <Text style={styles.nyPrimaryBtnText}>Verify & Link ✓</Text>
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={{ marginTop: 14 }}
-                    onPress={() => {
-                      setNyAuthId(null);
-                      setNyOtp('');
-                      setNyError('');
-                    }}
-                  >
-                    <Text style={styles.nyChangePhoneText}>
-                      Change phone number
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-          ) : Platform.OS === 'web' ? (
-            <View style={styles.webBrowserFallback}>
-              <Text style={styles.webFallbackTitle}>
-                Connect {activeWebProvider.name}
+                </View>
+                {nyError ? <Text style={styles.errorText}>{nyError}</Text> : null}
+                <TouchableOpacity
+                  style={styles.primaryActionButton}
+                  onPress={handleNySendOtp}
+                  disabled={nyLoading}
+                  activeOpacity={0.85}
+                >
+                  {nyLoading ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryActionText}>Send Real SMS OTP →</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.cardBox}>
+                <Text style={styles.inputLabel}>Enter 4-Digit SMS OTP</Text>
+                <Text style={styles.inputSubhint}>
+                  Sent via SMS to +91 {nyPhone}
+                </Text>
+                <TextInput
+                  style={styles.otpInput}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  placeholder="• • • •"
+                  placeholderTextColor="#94a3b8"
+                  value={nyOtp}
+                  onChangeText={setNyOtp}
+                  autoFocus
+                />
+                {nyError ? <Text style={styles.errorText}>{nyError}</Text> : null}
+                <TouchableOpacity
+                  style={styles.primaryActionButton}
+                  onPress={handleNyVerifyOtp}
+                  disabled={nyLoading}
+                  activeOpacity={0.85}
+                >
+                  {nyLoading ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={styles.primaryActionText}>Verify & Complete Link ✓</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ marginTop: 14, alignItems: 'center' }}
+                  onPress={() => {
+                    setNyAuthId(null);
+                    setNyOtp('');
+                    setNyError('');
+                  }}
+                >
+                  <Text style={styles.textLinkButton}>Change Phone Number</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.securityBox}>
+              <Text style={styles.securityIcon}>🔒</Text>
+              <Text style={styles.securityText}>
+                FareSnap never shares your phone number. Your auth token is saved locally in encrypted storage.
               </Text>
-              <Text style={styles.webFallbackSub}>
-                In-app WebView session bridge runs on Android & iOS. Tap &quot;Linked ✓&quot; above after signing in.
-              </Text>
             </View>
-          ) : (
+          </ScrollView>
+        ) : showWebPortal && activeWebProvider ? (
+          // Official In-App Web Login View (STRICT - NO FAKE LINK BUTTON)
+          <View style={{ flex: 1 }}>
+            {detectedLoggedIn && (
+              <View style={styles.successBanner}>
+                <Text style={styles.successBannerText}>
+                  ✅ Login Verified on {activeWebProvider.name}! Saving session...
+                </Text>
+              </View>
+            )}
             <WebView
               source={{ uri: getWebViewUrl(activeWebProvider) }}
               injectedJavaScriptBeforeContentLoaded={buildProviderScraperScript(
@@ -310,9 +334,7 @@ export function LinkAppsModal({
               userAgent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
               onMessage={(event) => {
                 try {
-                  const msg = JSON.parse(
-                    event.nativeEvent.data
-                  ) as ScraperBridgeMessage;
+                  const msg = JSON.parse(event.nativeEvent.data) as ScraperBridgeMessage;
                   if (msg?.source !== 'bh-page-api') return;
 
                   if (
@@ -323,181 +345,123 @@ export function LinkAppsModal({
                     setDetectedLoggedIn(true);
                     onToggleLink(activeWebProvider.id, true);
                     onLiveProductsScraped?.(activeWebProvider.id, msg.products);
+                    setTimeout(() => {
+                      onClose();
+                    }, 1200);
                   } else if (msg.type === 'AUTH_STATUS') {
-                    setDetectedLoggedIn(msg.isLoggedIn);
+                    if (msg.isLoggedIn) {
+                      setDetectedLoggedIn(true);
+                      onToggleLink(activeWebProvider.id, true);
+                      setTimeout(() => {
+                        onClose();
+                      }, 1200);
+                    }
                   }
                 } catch {}
               }}
               style={{ flex: 1 }}
             />
-          )}
-        </View>
-      ) : (
-        <View style={[styles.container, { paddingTop: insets.top }]}>
-          <View style={styles.topBar}>
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity style={styles.closeCircle} onPress={onClose}>
-              <Text style={styles.closeCircleText}>✕</Text>
-            </TouchableOpacity>
           </View>
-
+        ) : activeWebProvider ? (
+          // Hybrid Choice Screen for Uber, Ola, Rapido (Installed App vs Web Portal)
           <ScrollView
-            contentContainerStyle={[
-              styles.scrollContent,
-              { paddingBottom: Math.max(insets.bottom + 20, 32) },
-            ]}
-            showsVerticalScrollIndicator={false}
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
           >
-            <Text style={styles.heroTitle}>Compare & Book Rides</Text>
-            <Text style={styles.heroSubtitle}>in just 3 steps</Text>
-
-            <View style={styles.stepsRow}>
-              <Text style={styles.stepText}>🔌 Link</Text>
-              <Text style={styles.stepArrow}>→</Text>
-              <Text style={styles.stepText}>🚕 Compare</Text>
-              <Text style={styles.stepArrow}>→</Text>
-              <Text style={styles.stepText}>✅ Book</Text>
-            </View>
-
-            <View style={styles.shieldBox}>
-              <Text style={styles.shieldEmoji}>🛡️</Text>
-              <Text style={styles.shieldText}>
-                Your data is 100% safe. Session cookies & OTP tokens stay strictly on your device and are never stored on any external server.
-              </Text>
-            </View>
-
-            {/* Live Bridge Health Diagnostics */}
-            <View style={styles.diagCard}>
-              <Text style={styles.diagTitle}>Live Bridge Status</Text>
-              <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>ONDC BAP & AI Gateway</Text>
-                <Text
-                  style={[
-                    styles.diagBadge,
-                    bapConnected ? styles.diagGreen : styles.diagMuted,
-                  ]}
-                >
-                  {bapConnected ? '🟢 Connected' : '⚪ Local Fallback'}
-                </Text>
-              </View>
-              <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>Namma Yatri Direct API</Text>
-                <Text
-                  style={[
-                    styles.diagBadge,
-                    hasNyToken ? styles.diagGreen : styles.diagBlue,
-                  ]}
-                >
-                  {hasNyToken ? '🟢 Token Active' : '🔑 Link via OTP'}
-                </Text>
-              </View>
-              <View style={styles.diagRow}>
-                <Text style={styles.diagLabel}>Rapido PWA Bridge</Text>
-                <Text
-                  style={[
-                    styles.diagBadge,
-                    Platform.OS === 'web' ? styles.diagBlue : styles.diagGreen,
-                  ]}
-                >
-                  {Platform.OS === 'web'
-                    ? '📱 Active on Android/iOS'
-                    : '🟢 unupFe Ready'}
-                </Text>
-              </View>
-            </View>
-
-            {/* Linked Providers */}
-            {linkedProviders.map((p) => (
-              <View key={p.id} style={styles.providerCard}>
-                <View
-                  style={[
-                    styles.providerLogoCircle,
-                    { backgroundColor: p.brandColor },
-                  ]}
-                >
-                  <Text
-                    style={[styles.providerLogoText, { color: p.textColor }]}
-                  >
-                    {p.shortTag}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.providerName}>{p.name}</Text>
-                  <Text style={styles.providerSubHint}>
-                    Tap to open session · Long-press to unlink
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.linkedStatusRow}
-                  onPress={() => setActiveWebProvider(p)}
-                  onLongPress={() => {
-                    if (p.id === 'namma_yatri') {
-                      setStoredNammaYatriToken(null).catch(() => {});
-                    }
-                    onToggleLink(p.id, false);
-                  }}
-                >
-                  <Text style={styles.linkedText}>Linked</Text>
-                  <View style={styles.greenCheckCircle}>
-                    <Text style={styles.greenCheckText}>✓</Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-            ))}
-
-            {unlinkedProviders.length > 0 && (
-              <Text style={styles.saveMoreHint}>
-                Users who link 4 Apps{' '}
-                <Text style={styles.saveMoreGreen}>save 10% more</Text> on rides
-              </Text>
-            )}
-
-            {/* Unlinked Providers */}
-            {unlinkedProviders.map((p) => (
-              <TouchableOpacity
-                key={p.id}
-                style={styles.providerCard}
-                onPress={() => setActiveWebProvider(p)}
-                activeOpacity={0.8}
+            <View style={styles.hybridHeader}>
+              <View
+                style={[
+                  styles.brandCircleLarge,
+                  { backgroundColor: activeWebProvider.brandColor },
+                ]}
               >
-                <View
+                <Text
                   style={[
-                    styles.providerLogoCircle,
-                    { backgroundColor: p.brandColor },
+                    styles.brandCircleLargeText,
+                    { color: activeWebProvider.textColor },
                   ]}
                 >
-                  <Text
-                    style={[styles.providerLogoText, { color: p.textColor }]}
-                  >
-                    {p.shortTag}
+                  {activeWebProvider.shortTag}
+                </Text>
+              </View>
+              <Text style={styles.hybridTitle}>Connect {activeWebProvider.name}</Text>
+              <Text style={styles.hybridSubtitle}>
+                Choose how you want to connect your account for live pricing and 1-tap booking.
+              </Text>
+            </View>
+
+            {/* Option 1: Native App Connection */}
+            <View style={styles.optionCard}>
+              <View style={styles.optionHeaderRow}>
+                <Text style={styles.optionTag}>RECOMMENDED</Text>
+                <Text style={styles.optionStatus}>
+                  {checkingApp
+                    ? 'Checking device...'
+                    : isAppInstalled
+                    ? '🟢 App Detected'
+                    : '⚪ Not Installed'}
+                </Text>
+              </View>
+              <Text style={styles.optionTitle}>1-Tap Native App Bridge</Text>
+              <Text style={styles.optionBody}>
+                {isAppInstalled
+                  ? `The official ${activeWebProvider.name} app is installed on this device. Since you are already signed in with your phone and payment methods, linking allows FareSnap to hand off pickup and drop coordinates in 1 tap.`
+                  : `Install the official ${activeWebProvider.name} app on your device to enable instant 1-tap booking with your saved payment methods.`}
+              </Text>
+
+              {isAppInstalled ? (
+                <TouchableOpacity
+                  style={styles.linkInstalledButton}
+                  onPress={handleLinkInstalledApp}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.linkInstalledButtonText}>
+                    Link Installed App for 1-Tap Booking ✓
                   </Text>
-                </View>
-                <Text style={styles.providerName}>{p.name}</Text>
-                <View style={styles.linkActionRow}>
-                  <Text style={styles.linkActionText}>Link</Text>
-                  <View style={styles.linkChevronCircle}>
-                    <Text style={styles.linkChevronText}>›</Text>
-                  </View>
-                </View>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.installButton}
+                  onPress={handleOpenStore}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.installButtonText}>
+                    Install {activeWebProvider.name} from Store ↗
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Option 2: Official Web Login Portal */}
+            <View style={styles.optionCard}>
+              <View style={styles.optionHeaderRow}>
+                <Text style={styles.optionTagMuted}>ADVANCED</Text>
+                <Text style={styles.optionStatus}>Requires SMS OTP</Text>
+              </View>
+              <Text style={styles.optionTitle}>In-App Official Web Login</Text>
+              <Text style={styles.optionBody}>
+                Sign into your {activeWebProvider.name} account directly inside FareSnap using your registered mobile number and real SMS OTP.
+              </Text>
+              <TouchableOpacity
+                style={styles.openWebButton}
+                onPress={() => setShowWebPortal(true)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.openWebButtonText}>
+                  Open {activeWebProvider.name} Official Login Portal →
+                </Text>
               </TouchableOpacity>
-            ))}
+            </View>
 
-            <Text style={styles.disclaimerText}>
-              FareSnap is an independent commuter comparison utility and is not affiliated with Uber, Ola, Rapido, Namma Yatri, InDrive, Meru, or Bharat Cab. Users optionally sign into their own accounts via an integrated browser or OTP to view personal fare estimates.
-            </Text>
+            <View style={styles.securityBox}>
+              <Text style={styles.securityIcon}>🛡️</Text>
+              <Text style={styles.securityText}>
+                FareSnap never stores or intercepts your passwords. Authentication occurs strictly on the provider&apos;s verified domain.
+              </Text>
+            </View>
           </ScrollView>
-
-          <View style={styles.bottomBar}>
-            <TouchableOpacity
-              style={styles.compareToBookBtn}
-              onPress={onClose}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.compareToBookText}>Compare to Book</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+        ) : null}
+      </View>
     </Modal>
   );
 }
@@ -510,304 +474,61 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 52,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    gap: 12,
   },
   closeCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeCircleText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#0f172a',
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 32,
-  },
-  heroTitle: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#0f172a',
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  heroSubtitle: {
-    fontSize: 22,
     fontWeight: '700',
-    color: '#0f172a',
-    textAlign: 'center',
-    marginTop: 2,
-    marginBottom: 18,
-  },
-  stepsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    marginBottom: 20,
-  },
-  stepText: {
-    fontSize: 14,
-    fontWeight: '600',
     color: '#334155',
   },
-  stepArrow: {
-    fontSize: 14,
-    color: '#94a3b8',
-  },
-  shieldBox: {
-    alignItems: 'center',
-    marginBottom: 24,
-    paddingHorizontal: 12,
-  },
-  shieldEmoji: {
-    fontSize: 34,
-    marginBottom: 10,
-  },
-  shieldText: {
-    fontSize: 13,
-    color: '#475569',
-    textAlign: 'center',
-    lineHeight: 19,
-  },
-  diagCard: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginBottom: 18,
-  },
-  diagTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  diagRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3,
-  },
-  diagLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  diagBadge: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  diagGreen: {
-    color: '#16a34a',
-  },
-  diagBlue: {
-    color: '#2563eb',
-  },
-  diagMuted: {
-    color: '#64748b',
-  },
-  disclaimerText: {
-    fontSize: 11,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 16,
-    marginTop: 14,
-    paddingHorizontal: 8,
-  },
-  providerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#f1f5f9',
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  providerLogoCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  providerLogoText: {
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  providerName: {
+  topBarTitleCol: {
     flex: 1,
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0f172a',
   },
-  providerSubHint: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 2,
-  },
-  linkedStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  linkedText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#10b981',
-  },
-  greenCheckCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#10b981',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  greenCheckText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  saveMoreHint: {
-    fontSize: 14,
-    color: '#64748b',
-    textAlign: 'center',
-    marginVertical: 14,
-  },
-  saveMoreGreen: {
-    color: '#16a34a',
-    fontWeight: '700',
-  },
-  linkActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  linkActionText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#4338ca',
-  },
-  linkChevronCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#4338ca',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  linkChevronText: {
-    color: '#4338ca',
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: -2,
-  },
-  bottomBar: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-  },
-  compareToBookBtn: {
-    backgroundColor: '#4338ca',
-    paddingVertical: 16,
-    borderRadius: 28,
-    alignItems: 'center',
-  },
-  compareToBookText: {
-    color: '#ffffff',
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  webviewContainer: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  webviewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: 50,
-    paddingBottom: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-  },
-  webviewTitle: {
+  topBarTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#0f172a',
   },
-  webviewSubtitle: {
-    fontSize: 11,
+  topBarSubtitle: {
+    fontSize: 12,
     color: '#64748b',
+    marginTop: 1,
   },
-  doneLinkBtn: {
-    backgroundColor: '#10b981',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-  },
-  doneLinkBtnText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  webBrowserFallback: {
+  scrollArea: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
+    backgroundColor: '#f8fafc',
   },
-  webFallbackTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 8,
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 48,
   },
-  webFallbackSub: {
-    fontSize: 14,
-    color: '#64748b',
-    textAlign: 'center',
-  },
-  nyOtpContainer: {
-    flex: 1,
-    paddingHorizontal: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+
+  // Namma Yatri Direct OTP UI
   nyBrandBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#f59e0b',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    alignSelf: 'center',
+    marginBottom: 12,
+    marginTop: 8,
   },
   nyBrandBadgeText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     color: '#0f172a',
   },
@@ -815,49 +536,261 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     color: '#0f172a',
-    marginBottom: 8,
+    textAlign: 'center',
+    marginBottom: 6,
   },
   nySubtitle: {
     fontSize: 13,
     color: '#64748b',
     textAlign: 'center',
     lineHeight: 19,
-    marginBottom: 24,
+    marginBottom: 20,
+    paddingHorizontal: 12,
   },
-  nyInput: {
-    width: '100%',
-    borderWidth: 1.5,
-    borderColor: '#cbd5e1',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    fontSize: 18,
-    fontWeight: '600',
+  cardBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 16,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#0f172a',
-    textAlign: 'center',
+    marginBottom: 8,
+  },
+  inputSubhint: {
+    fontSize: 12,
+    color: '#64748b',
     marginBottom: 12,
   },
-  nyErrorText: {
-    fontSize: 13,
+  phoneInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    marginBottom: 14,
+    backgroundColor: '#ffffff',
+  },
+  phoneCountryCode: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#334155',
+    marginRight: 8,
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
+    paddingVertical: 12,
+  },
+  otpInput: {
+    borderWidth: 1.5,
+    borderColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 14,
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    letterSpacing: 8,
+    marginBottom: 14,
+    backgroundColor: '#eff6ff',
+  },
+  primaryActionButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryActionText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  errorText: {
     color: '#dc2626',
+    fontSize: 12,
+    fontWeight: '600',
     marginBottom: 10,
     textAlign: 'center',
   },
-  nyPrimaryBtn: {
-    width: '100%',
-    backgroundColor: '#4338ca',
-    paddingVertical: 16,
-    borderRadius: 28,
-    alignItems: 'center',
-  },
-  nyPrimaryBtnText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  nyChangePhoneText: {
+  textLinkButton: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#4338ca',
+    color: '#2563eb',
+  },
+
+  // Hybrid Choice Screen
+  hybridHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+    marginTop: 6,
+  },
+  brandCircleLarge: {
+    width: 60,
+    height: 60,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  brandCircleLargeText: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  hybridTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 6,
+  },
+  hybridSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 19,
+    paddingHorizontal: 16,
+  },
+  optionCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 14,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  optionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  optionTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803d',
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    letterSpacing: 0.4,
+  },
+  optionTagMuted: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#475569',
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    letterSpacing: 0.4,
+  },
+  optionStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  optionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  optionBody: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  linkInstalledButton: {
+    backgroundColor: '#16a34a',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  linkInstalledButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  installButton: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  installButtonText: {
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  openWebButton: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  openWebButtonText: {
+    color: '#2563eb',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  securityBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 8,
+    marginTop: 6,
+  },
+  securityIcon: {
+    fontSize: 16,
+  },
+  securityText: {
+    fontSize: 11,
+    color: '#64748b',
+    flex: 1,
+    lineHeight: 16,
+  },
+  successBanner: {
+    backgroundColor: '#dcfce7',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#bbf7d0',
+  },
+  successBannerText: {
+    color: '#15803d',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
