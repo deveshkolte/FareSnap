@@ -4,6 +4,19 @@
 
 ---
 
+<p align="center">
+  <img src="assets/screenshots/home.png" width="19%" alt="Home Command Center" />
+  <img src="assets/screenshots/plugins.png" width="19%" alt="Provider Connection Hub" />
+  <img src="assets/screenshots/location.png" width="19%" alt="City-Locked Autocomplete" />
+  <img src="assets/screenshots/map-picker.png" width="19%" alt="Interactive Leaflet Pickup Pin Modal" />
+  <img src="assets/screenshots/compare.png" width="19%" alt="Compare Fares & Smart Pickup" />
+</p>
+<p align="center">
+  <em>Pan-India Urban Mobility UI Flow: 1. Home Command Center & Commute Guard · 2. Hybrid Provider Connection Hub (Workflow C) · 3. 4-Tier Bounded Autocomplete · 4. Interactive Pickup Pin Snapper · 5. Multi-Tier Compare with Smart Pickup (-₹29) & ONDC Live Estimates</em>
+</p>
+
+---
+
 ## 1. System Architecture
 
 FareSnap is a full-stack mobility aggregator designed for Indian metropolitan transit networks. It pairs an **Expo SDK 58 / React Native** mobile client with an **ONDC Beckn TRV10 BAP Gateway** and India-specific geo-intelligence engines.
@@ -65,6 +78,13 @@ A Node.js implementation of an Open Network for Digital Commerce (ONDC) Buyer Ap
 - Queries Open-Meteo's `minutely_15` precipitation radar at pickup coordinates.
 - Rain rates $\ge 2.5\text{ mm/hr}$ dynamically calculate surge inflation (1.25x to 1.65x).
 - Surfaces a countdown timer indicating when precipitation is forecasted to clear so users can delay booking to avoid surge.
+
+### 2.5 Hybrid Provider Connection Hub (`app/plugins.tsx`, `components/LinkAppsModal.tsx`)
+Rather than forcing login walls or relying exclusively on brittle web scrapers, FareSnap implements **Workflow C (Hybrid Provider Gateway)**:
+- **Verified ONDC / Open Protocol Flow:** Direct Namma Yatri driver quotes and SMS OTP verification via `api.moving.tech`.
+- **Native App Bridge:** Deep-links directly to installed ride-hailing apps (`uber://`, `olacabs://`, `rapido://`) with pre-filled pickup/dropoff coordinates.
+- **Calibrated Instant Estimates Fallback:** If accounts are unlinked or skipped, FareSnap displays real-time calibrated city fares and ONDC network estimates immediately without blocking the commuter.
+- **Client-Side Security:** Login tokens and phone numbers remain strictly in secure local storage and are never transmitted to external cloud servers.
 
 ---
 
