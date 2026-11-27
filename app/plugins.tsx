@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -86,6 +87,8 @@ export default function PluginsScreen() {
     loadLinkedStatus();
   }, [loadLinkedStatus]);
 
+  const linkedCount = Object.values(linkedMap).filter(Boolean).length;
+
   const handleConnectPress = (id: LinkableProviderId) => {
     setActiveModalProvider(id);
     setLinkModalVisible(true);
@@ -94,7 +97,7 @@ export default function PluginsScreen() {
   const handleDisconnectPress = (id: LinkableProviderId, name: string) => {
     Alert.alert(
       `Disconnect ${name}?`,
-      'Your saved session will be removed from this phone. You will still see estimated fares.',
+      'Your saved session will be removed from this phone. You will still see live estimated fares.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -103,6 +106,7 @@ export default function PluginsScreen() {
           onPress: async () => {
             await setProviderLinked(id, false);
             setLinkedMap((prev) => ({ ...prev, [id]: false }));
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           },
         },
       ]
@@ -158,6 +162,25 @@ export default function PluginsScreen() {
             </Text>
           </View>
 
+          {/* Real-time Connection Status Indicator */}
+          <View
+            style={[
+              styles.statusBanner,
+              linkedCount > 0 ? styles.statusBannerLinked : styles.statusBannerUnlinked,
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusBannerText,
+                linkedCount > 0 ? styles.statusTextLinked : styles.statusTextUnlinked,
+              ]}
+            >
+              {linkedCount > 0
+                ? `🟢 ${linkedCount} of 4 ride accounts connected · Live account pricing active`
+                : '⚡ 0 connected · Using live ONDC network & calibrated city fares'}
+            </Text>
+          </View>
+
           {/* Grouped Minimal List Card */}
           <View style={styles.groupedCard}>
             {LINKABLE_PROVIDERS.map((provider, index) => {
@@ -170,20 +193,46 @@ export default function PluginsScreen() {
                   key={provider.id}
                   style={[
                     styles.providerRow,
+                    isLinked && styles.providerRowLinked,
                     !isLast && styles.providerRowBorder,
                   ]}
                 >
-                  {/* Brand Badge */}
-                  <View style={[styles.brandBadge, { backgroundColor: info.badgeBg }]}>
-                    <Text style={[styles.brandBadgeText, { color: info.badgeColor }]}>
-                      {info.badgeText}
-                    </Text>
+                  {/* Brand Badge with overlay checkmark if linked */}
+                  <View style={styles.brandBadgeWrapper}>
+                    <View style={[styles.brandBadge, { backgroundColor: info.badgeBg }]}>
+                      <Text style={[styles.brandBadgeText, { color: info.badgeColor }]}>
+                        {info.badgeText}
+                      </Text>
+                    </View>
+                    {isLinked && (
+                      <View style={styles.badgeCheckDot}>
+                        <Text style={styles.badgeCheckDotText}>✓</Text>
+                      </View>
+                    )}
                   </View>
 
                   {/* Provider Info */}
                   <View style={styles.providerInfoCol}>
-                    <Text style={styles.providerName}>{info.name}</Text>
-                    <Text style={styles.providerSubtitle}>{info.subtitle}</Text>
+                    <View style={styles.providerTitleRow}>
+                      <Text style={styles.providerName}>{info.name}</Text>
+                      {isLinked && (
+                        <View style={styles.activePillTag}>
+                          <Text style={styles.activePillDot}>●</Text>
+                          <Text style={styles.activePillText}>CONNECTED</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.providerSubtitle,
+                        isLinked && styles.providerSubtitleLinked,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {isLinked
+                        ? '✓ Live account linked · Exact surge active'
+                        : info.subtitle}
+                    </Text>
                   </View>
 
                   {/* Action Pill */}
@@ -193,7 +242,7 @@ export default function PluginsScreen() {
                       onPress={() => handleDisconnectPress(provider.id, info.name)}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.connectedPillText}>Connected ✓</Text>
+                      <Text style={styles.connectedPillText}>Linked ✓</Text>
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
@@ -201,7 +250,7 @@ export default function PluginsScreen() {
                       onPress={() => handleConnectPress(provider.id)}
                       activeOpacity={0.85}
                     >
-                      <Text style={styles.connectPillText}>Connect</Text>
+                      <Text style={styles.connectPillText}>+ Connect</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -211,7 +260,7 @@ export default function PluginsScreen() {
 
           {/* Minimal Privacy Note */}
           <Text style={styles.privacyNote}>
-            🔒 Logins stay securely on your device · Never shared
+            🔒 Logins stay securely on your device · Never sent to external servers
           </Text>
         </ScrollView>
 
@@ -230,7 +279,11 @@ export default function PluginsScreen() {
             onPress={handleProceed}
             activeOpacity={0.85}
           >
-            <Text style={styles.continueBtnText}>Continue →</Text>
+            <Text style={styles.continueBtnText}>
+              {linkedCount > 0
+                ? `Continue with ${linkedCount} Connected App${linkedCount > 1 ? 's' : ''} →`
+                : 'Continue with Live Estimates →'}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -250,6 +303,11 @@ export default function PluginsScreen() {
         onToggleLink={async (id, linked) => {
           await setProviderLinked(id, linked);
           setLinkedMap((prev) => ({ ...prev, [id]: linked }));
+          if (linked) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          } else {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          }
         }}
         onClose={() => {
           setLinkModalVisible(false);
@@ -284,8 +342,8 @@ const styles = StyleSheet.create({
 
   // Header Text
   headerBlock: {
-    marginTop: 8,
-    marginBottom: 20,
+    marginTop: 6,
+    marginBottom: 16,
   },
   heading: {
     fontSize: 24,
@@ -300,7 +358,35 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Grouped Card (iOS Settings / Modern Clean Style)
+  // Status Banner
+  statusBanner: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+  },
+  statusBannerLinked: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  statusBannerUnlinked: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  statusBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  statusTextLinked: {
+    color: '#15803d',
+  },
+  statusTextUnlinked: {
+    color: '#1e40af',
+  },
+
+  // Grouped Card
   groupedCard: {
     backgroundColor: '#ffffff',
     borderRadius: 16,
@@ -319,10 +405,17 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     gap: 12,
+    backgroundColor: '#ffffff',
+  },
+  providerRowLinked: {
+    backgroundColor: '#f8fdf9',
   },
   providerRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
+  },
+  brandBadgeWrapper: {
+    position: 'relative',
   },
   brandBadge: {
     width: 44,
@@ -336,18 +429,64 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.3,
   },
+  badgeCheckDot: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#16a34a',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeCheckDotText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800',
+  },
   providerInfoCol: {
     flex: 1,
+  },
+  providerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   providerName: {
     fontSize: 16,
     fontWeight: '700',
     color: '#0f172a',
   },
+  activePillTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  activePillDot: {
+    fontSize: 7,
+    color: '#15803d',
+  },
+  activePillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#15803d',
+    letterSpacing: 0.4,
+  },
   providerSubtitle: {
     fontSize: 12,
     color: '#64748b',
     marginTop: 2,
+  },
+  providerSubtitleLinked: {
+    color: '#15803d',
+    fontWeight: '600',
   },
 
   // Action Pills
@@ -356,7 +495,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#bfdbfe',
     paddingVertical: 7,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
@@ -422,7 +561,7 @@ const styles = StyleSheet.create({
   },
   continueBtnText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
   },
   skipBtn: {

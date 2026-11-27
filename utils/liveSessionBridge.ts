@@ -707,6 +707,9 @@ export async function setProviderLinked(
   const updated = { ...current, [providerId]: linked };
   try {
     await AsyncStorage.setItem(LINKED_PROVIDERS_KEY, JSON.stringify(updated));
+    if (providerId === 'namma_yatri' && !linked) {
+      await AsyncStorage.removeItem('faresnap_ny_token_v1');
+    }
   } catch {}
   return updated;
 }

@@ -120,9 +120,12 @@ export function LinkAppsModal({
     try {
       await verifyNammaYatriOtp(nyAuthId, nyOtp);
       onToggleLink('namma_yatri', true);
-      setActiveWebProvider(null);
       setNyAuthId(null);
       setNyOtp('');
+      setActiveWebProvider(null);
+      if (initialProviderId) {
+        onClose();
+      }
     } catch (err: any) {
       setNyError(err?.message || 'Invalid OTP.');
     } finally {

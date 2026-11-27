@@ -1831,6 +1831,12 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
             const isExpanded = expandedRideId === item.id;
             const isCheapest =
               idx === 0 && sortField === 'fare' && sortOrder === 'asc';
+            const providerKey = (item.providerName || '').toLowerCase();
+            const isAccountLinked =
+              (providerKey.includes('uber') && linkedProviders.uber) ||
+              (providerKey.includes('ola') && linkedProviders.ola) ||
+              (providerKey.includes('rapido') && linkedProviders.rapido) ||
+              ((providerKey.includes('namma') || providerKey.includes('ondc')) && linkedProviders.namma_yatri);
 
             return (
               <View key={item.id}>
@@ -1873,6 +1879,11 @@ Return ONLY valid JSON matching this schema (no markdown, no extra text):
                         {isCheapest && (
                           <View style={styles.bestMiniPill}>
                             <Text style={styles.bestMiniPillText}>BEST</Text>
+                          </View>
+                        )}
+                        {isAccountLinked && (
+                          <View style={styles.linkedMiniPill}>
+                            <Text style={styles.linkedMiniPillText}>⚡ LINKED</Text>
                           </View>
                         )}
                       </View>
@@ -2926,6 +2937,21 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     color: '#15803d',
+  },
+  linkedMiniPill: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 5,
+  },
+  linkedMiniPillText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1d4ed8',
+    letterSpacing: 0.3,
   },
   etaSubRow: {
     flexDirection: 'row',
