@@ -4,6 +4,8 @@
 
 ---
 
+## App Preview
+
 <p align="center">
   <img src="assets/screenshots/home.png" width="19%" alt="Home Command Center" />
   <img src="assets/screenshots/plugins.png" width="19%" alt="Provider Connection Hub" />
