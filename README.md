@@ -1,6 +1,12 @@
 # FareSnap (RideCompare) — Multi-Modal Urban Mobility Reference Archive
 
+[![Latest Release](https://img.shields.io/github/v/release/deveshkolte/FareSnap?color=2563eb&label=Latest%20Release&style=flat-square)](https://github.com/deveshkolte/FareSnap/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![Expo SDK 58](https://img.shields.io/badge/Expo-SDK_58-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev)
+
 > **Status: Archived Prototype** — Consumer multi-app aggregation was sunset due to walled-garden anti-bot constraints. The core ONDC Beckn TRV10 BAP gateway and Indian geo-intelligence engines are being extracted into a standalone open-source protocol kit.
+
+📲 **[Download Latest APK (v2.1.0)](https://github.com/deveshkolte/FareSnap/releases/latest)** — Standalone Android Preview Build
 
 ---
 
